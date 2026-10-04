@@ -1,16 +1,39 @@
 /**
- * Firebase Activity & Quota Tracker (Development & Debug Tool)
- * Tracks all reads, writes, active realtime listeners, duplicate listeners, and queries
- * to ensure maximum Firestore quota efficiency.
+ * Firebase Activity & Quota Tracker (Comprehensive Audit & Debug System)
+ * Logs every Firestore operation with:
+ * - operation type
+ * - Firestore collection/path
+ * - read/write
+ * - timestamp
+ * - component/function that triggered it (caller)
+ * - whether it came from an onSnapshot listener
+ * - whether it was a duplicate operation
+ * - number of documents returned
  */
+
+export type OperationType =
+  | 'getDoc'
+  | 'getDocs'
+  | 'onSnapshot'
+  | 'setDoc'
+  | 'updateDoc'
+  | 'deleteDoc'
+  | 'batch'
+  | 'listener_start'
+  | 'listener_stop';
 
 export interface FirebaseEventLog {
   id: string;
-  type: 'read' | 'write' | 'listener_start' | 'listener_stop' | 'duplicate_warning';
-  collection: string;
-  detail: string;
-  count: number;
+  operationType: OperationType;
+  collectionPath: string;
+  category: 'read' | 'write' | 'listener';
   timestamp: number;
+  formattedTime: string;
+  caller: string;
+  fromSnapshot: boolean;
+  isDuplicate: boolean;
+  docCount: number;
+  detail: string;
 }
 
 export interface FirebaseTrackerStats {
@@ -18,69 +41,122 @@ export interface FirebaseTrackerStats {
   totalWrites: number;
   activeListenersCount: number;
   duplicateListenersDetected: number;
-  activeListeners: Record<string, { key: string; collection: string; detail: string; startedAt: number }>;
+  duplicateOperationsDetected: number;
+  activeListeners: Record<string, { key: string; collection: string; detail: string; startedAt: number; caller: string }>;
   recentLogs: FirebaseEventLog[];
 }
 
 class FirebaseTracker {
   private totalReads = 0;
   private totalWrites = 0;
-  private duplicateWarnings = 0;
-  private activeListeners = new Map<string, { key: string; collection: string; detail: string; startedAt: number }>();
+  private duplicateListenerWarnings = 0;
+  private duplicateOperations = 0;
+  private activeListeners = new Map<
+    string,
+    { key: string; collection: string; detail: string; startedAt: number; caller: string }
+  >();
   private logs: FirebaseEventLog[] = [];
+  private recentOpsWindow = new Map<string, number>();
   private isDev = Boolean(import.meta.env.DEV);
 
-  private addLog(entry: Omit<FirebaseEventLog, 'id' | 'timestamp'>) {
+  private checkDuplicate(key: string, windowMs = 800): boolean {
+    const now = Date.now();
+    const lastTime = this.recentOpsWindow.get(key);
+    this.recentOpsWindow.set(key, now);
+
+    // Prune old entries
+    if (this.recentOpsWindow.size > 200) {
+      for (const [k, t] of this.recentOpsWindow.entries()) {
+        if (now - t > 5000) this.recentOpsWindow.delete(k);
+      }
+    }
+
+    if (lastTime && now - lastTime < windowMs) {
+      this.duplicateOperations++;
+      return true;
+    }
+    return false;
+  }
+
+  private addLog(entry: Omit<FirebaseEventLog, 'id' | 'timestamp' | 'formattedTime'>) {
+    const now = Date.now();
+    const d = new Date(now);
+    const ms = String(d.getMilliseconds()).padStart(3, '0');
+    const formattedTime = `${d.toTimeString().split(' ')[0]}.${ms}`;
+
     const log: FirebaseEventLog = {
       ...entry,
       id: Math.random().toString(36).slice(2, 9),
-      timestamp: Date.now(),
+      timestamp: now,
+      formattedTime,
     };
+
     this.logs.unshift(log);
-    if (this.logs.length > 200) {
+    if (this.logs.length > 250) {
       this.logs.pop();
     }
 
     if (this.isDev) {
-      if (entry.type === 'duplicate_warning') {
-        console.warn(`🔥 [FIRESTORE WARNING - DUPLICATE LISTENER] Collection: ${entry.collection} | Key: ${entry.detail}`);
-      } else if (entry.type === 'write') {
-        console.log(`🔥 [FIRESTORE WRITE] (${entry.collection}) ${entry.detail}`);
-      } else if (entry.type === 'read') {
-        console.log(`🔥 [FIRESTORE READ] (${entry.collection}) +${entry.count} doc(s) | ${entry.detail}`);
-      }
+      const tag = log.category === 'write' ? '✍️ WRITE' : log.category === 'read' ? '📖 READ' : '⚡ LISTENER';
+      const dupTag = log.isDuplicate ? ' [DUPLICATE]' : '';
+      const snapTag = log.fromSnapshot ? ' [onSnapshot]' : '';
+      console.log(
+        `[FIREBASE] ${tag}${dupTag}${snapTag} (${log.operationType}) ${log.collectionPath} | Docs: ${log.docCount} | Caller: ${log.caller} | ${log.detail}`
+      );
     }
   }
 
-  trackRead(collection: string, detail: string, docCount = 1) {
+  trackRead(
+    collectionPath: string,
+    operationType: 'getDoc' | 'getDocs' | 'onSnapshot',
+    caller: string,
+    detail: string,
+    docCount = 1,
+    fromSnapshot = false
+  ) {
     this.totalReads += docCount;
+    const isDuplicate = this.checkDuplicate(`read:${collectionPath}:${operationType}:${detail}`, 600);
+
     this.addLog({
-      type: 'read',
-      collection,
+      operationType,
+      collectionPath,
+      category: 'read',
+      caller,
+      fromSnapshot,
+      isDuplicate,
+      docCount,
       detail,
-      count: docCount,
     });
   }
 
-  trackWrite(collection: string, action: 'set' | 'update' | 'delete' | 'add', docId: string) {
+  trackWrite(
+    collectionPath: string,
+    operationType: 'setDoc' | 'updateDoc' | 'deleteDoc' | 'batch',
+    caller: string,
+    docId: string,
+    detail?: string
+  ) {
     this.totalWrites += 1;
+    const opDetail = detail || `${operationType.toUpperCase()} doc '${docId}'`;
+    const isDuplicate = this.checkDuplicate(`write:${collectionPath}:${docId}`, 600);
+
     this.addLog({
-      type: 'write',
-      collection,
-      detail: `${action.toUpperCase()} doc '${docId}'`,
-      count: 1,
+      operationType,
+      collectionPath,
+      category: 'write',
+      caller,
+      fromSnapshot: false,
+      isDuplicate,
+      docCount: 1,
+      detail: opDetail,
     });
   }
 
-  trackListenerStart(key: string, collection: string, detail: string): () => void {
-    if (this.activeListeners.has(key)) {
-      this.duplicateWarnings += 1;
-      this.addLog({
-        type: 'duplicate_warning',
-        collection,
-        detail: `Duplicate listener started for key: ${key}`,
-        count: 0,
-      });
+  trackListenerStart(key: string, collection: string, caller: string, detail: string): () => void {
+    const isDuplicate = this.activeListeners.has(key);
+    if (isDuplicate) {
+      this.duplicateListenerWarnings += 1;
+      console.warn(`🔥 [FIREBASE DUPLICATE LISTENER] Key: "${key}" was registered while an active listener already exists! Caller: ${caller}`);
     }
 
     this.activeListeners.set(key, {
@@ -88,35 +164,43 @@ class FirebaseTracker {
       collection,
       detail,
       startedAt: Date.now(),
+      caller,
     });
 
     this.addLog({
-      type: 'listener_start',
-      collection,
+      operationType: 'listener_start',
+      collectionPath: collection,
+      category: 'listener',
+      caller,
+      fromSnapshot: true,
+      isDuplicate,
+      docCount: 0,
       detail: `Started listener: ${key} (${detail})`,
-      count: 0,
     });
 
-    // Return cleanup callback
     return () => {
-      this.trackListenerStop(key, collection);
+      this.trackListenerStop(key, collection, caller);
     };
   }
 
-  trackListenerStop(key: string, collection: string) {
+  trackListenerStop(key: string, collection: string, caller: string) {
     if (this.activeListeners.has(key)) {
       this.activeListeners.delete(key);
       this.addLog({
-        type: 'listener_stop',
-        collection,
+        operationType: 'listener_stop',
+        collectionPath: collection,
+        category: 'listener',
+        caller,
+        fromSnapshot: true,
+        isDuplicate: false,
+        docCount: 0,
         detail: `Stopped listener: ${key}`,
-        count: 0,
       });
     }
   }
 
   getStats(): FirebaseTrackerStats {
-    const activeMap: Record<string, { key: string; collection: string; detail: string; startedAt: number }> = {};
+    const activeMap: Record<string, { key: string; collection: string; detail: string; startedAt: number; caller: string }> = {};
     this.activeListeners.forEach((v, k) => {
       activeMap[k] = v;
     });
@@ -125,7 +209,8 @@ class FirebaseTracker {
       totalReads: this.totalReads,
       totalWrites: this.totalWrites,
       activeListenersCount: this.activeListeners.size,
-      duplicateListenersDetected: this.duplicateWarnings,
+      duplicateListenersDetected: this.duplicateListenerWarnings,
+      duplicateOperationsDetected: this.duplicateOperations,
       activeListeners: activeMap,
       recentLogs: [...this.logs],
     };
@@ -134,14 +219,15 @@ class FirebaseTracker {
   reset() {
     this.totalReads = 0;
     this.totalWrites = 0;
-    this.duplicateWarnings = 0;
+    this.duplicateListenerWarnings = 0;
+    this.duplicateOperations = 0;
     this.logs = [];
+    this.recentOpsWindow.clear();
   }
 }
 
 export const tracker = new FirebaseTracker();
 
-// Expose tracker on window in dev mode for quick console inspection: window.chatlaxyTracker.getStats()
 if (typeof window !== 'undefined') {
   (window as any).chatlaxyTracker = tracker;
 }

@@ -143,20 +143,17 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       });
     }
 
-    // Fetch latest directly from Firestore to ensure real-time accuracy for likes, bio, etc.
+    // Fetch latest directly from Firestore (or in-memory cache)
     getUserFromFirestore(cleanTarget)
       .then((doc) => {
         if (doc) {
           setActiveProfile(doc);
-          if (cleanTarget === currentUser.username.toLowerCase().trim()) {
-            onUpdateCurrentUser(doc);
-          }
         }
       })
       .catch((err) => {
         console.error('Error loading user profile from Firestore:', err);
       });
-  }, [targetUserId, currentUser, allUsers, isOpen, onUpdateCurrentUser]);
+  }, [targetUserId, isOpen]);
 
   // Sync edit form fields whenever activeProfile changes
   useEffect(() => {

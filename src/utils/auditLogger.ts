@@ -74,12 +74,14 @@ export function addAuditLog(
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch {}
 
-  // Sync to Firestore in background
-  try {
-    addAuditLogToFirestore(entry).catch((err) =>
-      console.warn('Could not sync log to firestore:', err)
-    );
-  } catch {}
+  // Sync admin logs to Firestore (routine user/chat events remain local)
+  if (category === 'admin') {
+    try {
+      addAuditLogToFirestore(entry).catch((err) =>
+        console.warn('Could not sync log to firestore:', err)
+      );
+    } catch {}
+  }
 
   return entry;
 }

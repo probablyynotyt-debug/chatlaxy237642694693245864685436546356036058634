@@ -21,6 +21,7 @@ import { NewsPost, NewsReactionType } from '../types/news';
 import { handleChatCommand } from '../utils/commandHandler';
 import { isFounderOrAbove } from '../utils/permissions';
 import { addAuditLog } from '../utils/auditLogger';
+import { auth } from '../services/firebaseConfig';
 import { FirebaseTrackerModal } from './FirebaseTrackerModal';
 import {
   subscribeToMessages,
@@ -31,6 +32,7 @@ import {
   subscribeToUsers,
   saveUserToFirestore,
   recordMessageSentForDailyRewards,
+  claimDailyReward,
   subscribeToNews,
   createNewsPostInFirestore,
   deleteNewsPostFromFirestore,
@@ -115,6 +117,11 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
+
+  // Restrict Firebase Activity & Quota Dev Inspector strictly to null@gmail.com
+  const isInspectorAllowed =
+    currentUser?.email?.toLowerCase().trim() === 'null@gmail.com' ||
+    auth.currentUser?.email?.toLowerCase().trim() === 'null@gmail.com';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -209,6 +216,12 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     }
   };
 
+  const isNewsOpenRef = useRef(isNewsOpen);
+  isNewsOpenRef.current = isNewsOpen;
+
+  const isNotificationsOpenRef = useRef(isNotificationsOpen);
+  isNotificationsOpenRef.current = isNotificationsOpen;
+
   // 1. Subscribe to Live Messages
   useEffect(() => {
     const unsubscribe = subscribeToMessages((liveMessages) => {
@@ -217,7 +230,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     return () => unsubscribe();
   }, [activeServer?.id, activeChannel?.id]);
 
-  // 2. Subscribe to Live Registered Users
+  // 2. Subscribe to Live Registered Users (Cached initial load)
   useEffect(() => {
     const unsubscribe = subscribeToUsers((usersMap) => {
       setAllUsers(usersMap);
@@ -225,14 +238,43 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // 3. Subscribe to Live Firestore News Announcements
+  // 2b. Automatically merge active chatters from incoming messages (0 Firestore reads)
+  useEffect(() => {
+    if (messages.length === 0) return;
+    setAllUsers((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      messages.forEach((msg) => {
+        if (msg.senderName && !msg.isSystemBot) {
+          const key = msg.senderName.toLowerCase().trim();
+          if (!next[key]) {
+            next[key] = {
+              username: msg.senderName,
+              profilePicture: msg.senderAvatar || null,
+              banner: null,
+              avatarFrame: msg.senderAvatarFrame || null,
+              mood: '',
+              bioSegments: [],
+              rank: (msg as any).senderRank || 'VIP',
+              customRankName: (msg as any).senderCustomRankName || null,
+              usernameStyle: (msg as any).senderUsernameStyle || null,
+            };
+            changed = true;
+          }
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [messages]);
+
+  // 3. Subscribe to Live Firestore News Announcements (Subscribed once, not destroyed on drawer open)
   useEffect(() => {
     const lastRead = Number(localStorage.getItem('chatlaxy_last_read_news_time') || '0');
     const unsubscribe = subscribeToNews((posts) => {
       setNewsPosts(posts);
       if (posts.length > 0) {
         const latestTs = Math.max(...posts.map((p) => p.timestamp));
-        if (latestTs > lastRead && !isNewsOpen) {
+        if (latestTs > lastRead && !isNewsOpenRef.current) {
           setHasUnreadNews(true);
         }
       } else {
@@ -240,9 +282,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       }
     });
     return () => unsubscribe();
-  }, [isNewsOpen]);
+  }, []);
 
-  // 4. Subscribe to Live User Notifications
+  // 4. Subscribe to Live User Notifications (Subscribed once per user, not destroyed on dropdown open)
   useEffect(() => {
     if (!currentUser.username) return;
     const lastReadNotif = Number(
@@ -253,7 +295,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       setNotifications(notifs);
       if (notifs.length > 0) {
         const latestTs = Math.max(...notifs.map((n) => n.timestamp));
-        if (latestTs > lastReadNotif && !isNotificationsOpen) {
+        if (latestTs > lastReadNotif && !isNotificationsOpenRef.current) {
           setHasUnreadNotifications(true);
         }
       } else {
@@ -261,7 +303,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       }
     });
     return () => unsubscribe();
-  }, [currentUser.username, isNotificationsOpen]);
+  }, [currentUser.username]);
 
   // Open & Mark Notifications Read
   const handleToggleNotifications = () => {
@@ -448,6 +490,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         : [];
     if (currentClaimed.includes(milestoneCount)) return;
 
+    // Instant local state update
     const updated: ProfileData = {
       ...currentUser,
       dailyMessagesDate: todayKey,
@@ -457,15 +500,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         ruby: (currentUser.wallet?.ruby || 0) + rubies,
       },
     };
-
     onUpdateCurrentUser(updated);
-    await saveUserToFirestore(updated);
-    addAuditLog(
-      currentUser.username,
-      'Claimed Daily Reward',
-      `Claimed milestone ${milestoneCount} messages: +${gold} Gold, +${rubies} Rubies`,
-      'user'
-    );
+
+    // Atomic update in Firestore (1 targeted updateDoc)
+    claimDailyReward(currentUser.username, milestoneCount, gold, rubies).then((fresh) => {
+      if (fresh) onUpdateCurrentUser(fresh);
+    }).catch((err) => {
+      console.warn('Error claiming daily reward:', err);
+    });
   };
 
   // Select an avatar frame
@@ -683,17 +725,19 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
 
         {/* Top Right: Firebase Inspector + Bell Notifications Button + User's Profile Picture */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Firebase Quota & Activity Inspector Button */}
-          <button
-            type="button"
-            onClick={() => setIsTrackerOpen(true)}
-            title="Inspect Firebase Reads, Writes & Realtime Listeners"
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-[#1a1b22] hover:bg-[#232530] border border-amber-500/30 hover:border-amber-500/50 rounded text-[11px] font-mono text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="hidden sm:inline">Firebase Inspector</span>
-            <span className="sm:hidden">⚡ Inspector</span>
-          </button>
+          {/* Firebase Quota & Activity Inspector Button (Restricted to null@gmail.com) */}
+          {isInspectorAllowed && (
+            <button
+              type="button"
+              onClick={() => setIsTrackerOpen(true)}
+              title="Inspect Firebase Reads, Writes & Realtime Listeners"
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-[#1a1b22] hover:bg-[#232530] border border-amber-500/30 hover:border-amber-500/50 rounded text-[11px] font-mono text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="hidden sm:inline">Firebase Inspector</span>
+              <span className="sm:hidden">⚡ Inspector</span>
+            </button>
+          )}
 
           {/* Bell Notifications Button */}
           <button
@@ -1188,11 +1232,13 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         </div>
       )}
 
-      {/* Firebase Activity & Quota Dev Inspector Modal */}
-      <FirebaseTrackerModal
-        isOpen={isTrackerOpen}
-        onClose={() => setIsTrackerOpen(false)}
-      />
+      {/* Firebase Activity & Quota Dev Inspector Modal (Restricted to null@gmail.com) */}
+      {isInspectorAllowed && (
+        <FirebaseTrackerModal
+          isOpen={isTrackerOpen}
+          onClose={() => setIsTrackerOpen(false)}
+        />
+      )}
     </div>
   );
 };

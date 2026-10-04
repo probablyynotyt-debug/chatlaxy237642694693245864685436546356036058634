@@ -72,12 +72,14 @@ interface CacheItem<T> {
   cachedAt: number;
 }
 
-const PROFILE_CACHE_TTL = 3 * 60 * 1000; // 3 minutes cache for user profiles
+const PROFILE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache for user profiles
 const profileCache = new Map<string, CacheItem<ProfileData>>();
+const uidMapCache = new Map<string, string>(); // username -> uid mapping
 
 let cachedServers: CacheItem<ServerData[]> | null = null;
 const cachedChannels = new Map<string, CacheItem<ServerChannel[]>>();
 const cachedRoles = new Map<string, CacheItem<ServerRole[]>>();
+const cachedMembers = new Map<string, CacheItem<ServerMember[]>>();
 
 export function invalidateUserCache(username?: string) {
   if (username) {
@@ -87,16 +89,12 @@ export function invalidateUserCache(username?: string) {
   }
 }
 
-// Helper: standard today date key for daily rewards
 export const getTodayKey = (): string => new Date().toISOString().slice(0, 10);
 
 // ----------------------------------------------------
 // 1. FIREBASE AUTHENTICATION & SESSIONS
 // ----------------------------------------------------
 
-/**
- * Register a new user using Firebase Authentication and initialize Firestore profile.
- */
 export async function signup(
   username: string,
   password: string,
@@ -107,7 +105,7 @@ export async function signup(
 
   // 1. Check username availability in usernames collection
   const usernameRef = doc(db, 'usernames', usernameKey);
-  tracker.trackRead('usernames', `Check availability for ${usernameKey}`, 1);
+  tracker.trackRead('usernames', 'getDoc', 'signup()', `Check availability for ${usernameKey}`, 1);
   const usernameSnap = await getDoc(usernameRef);
   if (usernameSnap.exists()) {
     throw new Error('This username is already taken. Please choose another.');
@@ -123,7 +121,6 @@ export async function signup(
   const userCredential = await createUserWithEmailAndPassword(auth, email, password);
   const user = userCredential.user;
 
-  // Set Auth display name
   try {
     await updateProfile(user, { displayName: cleanUsername });
   } catch {}
@@ -163,7 +160,7 @@ export async function signup(
     email: email,
     createdAt: Date.now(),
   });
-  tracker.trackWrite('usernames', 'set', usernameKey);
+  tracker.trackWrite('usernames', 'batch', 'signup()', usernameKey, `Map ${usernameKey} -> ${user.uid}`);
 
   const userDocRef = doc(db, 'users', user.uid);
   batch.set(userDocRef, {
@@ -173,11 +170,11 @@ export async function signup(
     updatedAt: Date.now(),
     lastActive: Date.now(),
   });
-  tracker.trackWrite('users', 'set', user.uid);
+  tracker.trackWrite('users', 'batch', 'signup()', user.uid, `Create profile doc for ${cleanUsername}`);
 
   await batch.commit();
 
-  // Populate cache
+  uidMapCache.set(usernameKey, user.uid);
   profileCache.set(usernameKey, {
     data: initialProfile,
     cachedAt: Date.now(),
@@ -186,9 +183,6 @@ export async function signup(
   return initialProfile;
 }
 
-/**
- * Sign in using Firebase Authentication with username or email.
- */
 export async function login(
   identifier: string,
   password: string
@@ -196,33 +190,32 @@ export async function login(
   const cleanId = identifier.trim();
   let emailToUse = cleanId;
 
-  // If user entered a username instead of an email, resolve email from usernames collection
   if (!cleanId.includes('@')) {
     const usernameKey = cleanId.toLowerCase();
     const usernameRef = doc(db, 'usernames', usernameKey);
-    tracker.trackRead('usernames', `Lookup email for username ${usernameKey}`, 1);
+    tracker.trackRead('usernames', 'getDoc', 'login()', `Resolve email for username ${usernameKey}`, 1);
     const snap = await getDoc(usernameRef);
     if (!snap.exists()) {
       return null;
     }
     const data = snap.data();
     emailToUse = data?.email || `${usernameKey}@chatlaxy.internal`;
+    if (data?.uid) {
+      uidMapCache.set(usernameKey, data.uid);
+    }
   }
 
-  // Real Firebase Auth sign-in
   const userCredential = await signInWithEmailAndPassword(auth, emailToUse, password);
   const user = userCredential.user;
 
-  // Retrieve user profile document
   const userDocRef = doc(db, 'users', user.uid);
-  tracker.trackRead('users', `Load profile for uid ${user.uid}`, 1);
+  tracker.trackRead('users', 'getDoc', 'login()', `Load profile for uid ${user.uid}`, 1);
   const profileSnap = await getDoc(userDocRef);
 
   let profile: ProfileData;
   if (profileSnap.exists()) {
     profile = profileSnap.data() as ProfileData;
   } else {
-    // Fallback if doc was missing
     profile = {
       username: user.displayName || cleanId,
       email: user.email || emailToUse,
@@ -242,17 +235,12 @@ export async function login(
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
-    tracker.trackWrite('users', 'set', user.uid);
+    tracker.trackWrite('users', 'setDoc', 'login()', user.uid, `Initialize fallback profile for ${user.uid}`);
   }
 
-  // Update lastActive timestamp efficiently
-  try {
-    updateDoc(userDocRef, { lastActive: Date.now() });
-    tracker.trackWrite('users', 'update', user.uid);
-  } catch {}
-
-  // Cache user profile
-  profileCache.set(profile.username.toLowerCase().trim(), {
+  const cleanUsernameKey = profile.username.toLowerCase().trim();
+  uidMapCache.set(cleanUsernameKey, user.uid);
+  profileCache.set(cleanUsernameKey, {
     data: profile,
     cachedAt: Date.now(),
   });
@@ -260,17 +248,11 @@ export async function login(
   return profile;
 }
 
-/**
- * Sign out of Firebase Authentication.
- */
 export async function logout(): Promise<void> {
   invalidateUserCache();
   await signOut(auth);
 }
 
-/**
- * Restore current session from Firebase Auth state.
- */
 export async function getCurrentUser(): Promise<{ authenticated: boolean; user?: ProfileData }> {
   return new Promise((resolve) => {
     const unsubscribe = onAuthStateChanged(auth, async (user: FirebaseUser | null) => {
@@ -282,11 +264,13 @@ export async function getCurrentUser(): Promise<{ authenticated: boolean; user?:
 
       try {
         const userDocRef = doc(db, 'users', user.uid);
-        tracker.trackRead('users', `Session restore for uid ${user.uid}`, 1);
+        tracker.trackRead('users', 'getDoc', 'getCurrentUser()', `Session restore for uid ${user.uid}`, 1);
         const profileSnap = await getDoc(userDocRef);
         if (profileSnap.exists()) {
           const profile = profileSnap.data() as ProfileData;
-          profileCache.set(profile.username.toLowerCase().trim(), {
+          const uKey = profile.username.toLowerCase().trim();
+          uidMapCache.set(uKey, user.uid);
+          profileCache.set(uKey, {
             data: profile,
             cachedAt: Date.now(),
           });
@@ -306,35 +290,31 @@ export async function getCurrentUser(): Promise<{ authenticated: boolean; user?:
 // 2. USER PROFILES & DATA
 // ----------------------------------------------------
 
-/**
- * Save / Update full or partial user profile in Firestore with quota optimization.
- * Targeted updates avoid rewriting unchanged fields.
- */
 export async function saveUserToFirestore(profile: ProfileData): Promise<void> {
   if (!profile || !profile.username) return;
   const usernameKey = profile.username.toLowerCase().trim();
 
-  // Update in-memory cache immediately for 0-latency UI
+  // Update in-memory cache immediately
   profileCache.set(usernameKey, {
     data: profile,
     cachedAt: Date.now(),
   });
 
   const currentUser = auth.currentUser;
-  let targetUid = (profile as any).uid || (currentUser && currentUser.uid);
+  let targetUid = (profile as any).uid || uidMapCache.get(usernameKey) || (currentUser && currentUser.uid);
 
-  // If UID is not known, resolve from usernames collection
   if (!targetUid) {
+    tracker.trackRead('usernames', 'getDoc', 'saveUserToFirestore()', `Resolve uid for ${usernameKey}`, 1);
     const userMapDoc = await getDoc(doc(db, 'usernames', usernameKey));
-    tracker.trackRead('usernames', `Resolve uid for ${usernameKey}`, 1);
     if (userMapDoc.exists()) {
       targetUid = userMapDoc.data()?.uid;
+      if (targetUid) uidMapCache.set(usernameKey, targetUid);
     }
   }
 
   if (targetUid) {
     const userRef = doc(db, 'users', targetUid);
-    tracker.trackWrite('users', 'set', targetUid);
+    tracker.trackWrite('users', 'setDoc', 'saveUserToFirestore()', targetUid, `Save profile data for ${profile.username}`);
     await setDoc(userRef, {
       ...profile,
       updatedAt: Date.now(),
@@ -342,33 +322,34 @@ export async function saveUserToFirestore(profile: ProfileData): Promise<void> {
   }
 }
 
-/**
- * Fetch a user profile with in-memory caching to prevent duplicate Firestore reads.
- */
 export async function getUserFromFirestore(username: string): Promise<ProfileData | null> {
   if (!username) return null;
   const usernameKey = username.toLowerCase().trim();
 
-  // 1. Check in-memory cache first
+  // 1. In-memory cache hit (0 reads)
   const cached = profileCache.get(usernameKey);
   if (cached && Date.now() - cached.cachedAt < PROFILE_CACHE_TTL) {
     return cached.data;
   }
 
-  // 2. Resolve UID from usernames collection
-  const usernameRef = doc(db, 'usernames', usernameKey);
-  tracker.trackRead('usernames', `Lookup uid for ${usernameKey}`, 1);
-  const uSnap = await getDoc(usernameRef);
-  if (!uSnap.exists()) {
-    return null;
+  // 2. Check UID cache
+  let uid = uidMapCache.get(usernameKey);
+  if (!uid) {
+    const usernameRef = doc(db, 'usernames', usernameKey);
+    tracker.trackRead('usernames', 'getDoc', 'getUserFromFirestore()', `Lookup uid for ${usernameKey}`, 1);
+    const uSnap = await getDoc(usernameRef);
+    if (!uSnap.exists()) {
+      return null;
+    }
+    uid = uSnap.data()?.uid;
+    if (uid) uidMapCache.set(usernameKey, uid);
   }
 
-  const uid = uSnap.data()?.uid;
   if (!uid) return null;
 
-  // 3. Fetch user profile
+  // 3. Fetch profile
   const userRef = doc(db, 'users', uid);
-  tracker.trackRead('users', `Fetch profile for ${usernameKey}`, 1);
+  tracker.trackRead('users', 'getDoc', 'getUserFromFirestore()', `Fetch profile for ${usernameKey}`, 1);
   const profileSnap = await getDoc(userRef);
   if (!profileSnap.exists()) {
     return null;
@@ -383,98 +364,86 @@ export async function getUserFromFirestore(username: string): Promise<ProfileDat
   return profile;
 }
 
-/**
- * Get all users for admin or specific panels with query limit.
- */
 export async function getAllUsersFromFirestore(): Promise<ProfileData[]> {
-  const usersQuery = query(collection(db, 'users'), limit(50));
-  tracker.trackRead('users', 'Query users (limit 50)', 50);
+  const usersQuery = query(collection(db, 'users'), limit(30));
+  tracker.trackRead('users', 'getDocs', 'getAllUsersFromFirestore()', 'Query users (limit 30)', 30);
   const snap = await getDocs(usersQuery);
   const list: ProfileData[] = [];
   snap.forEach((docSnap) => {
     const data = docSnap.data() as ProfileData;
     list.push(data);
     if (data.username) {
-      profileCache.set(data.username.toLowerCase().trim(), {
+      const uKey = data.username.toLowerCase().trim();
+      profileCache.set(uKey, {
         data,
         cachedAt: Date.now(),
       });
+      if ((data as any).uid) uidMapCache.set(uKey, (data as any).uid);
     }
   });
   return list;
 }
 
 /**
- * Efficient subscription to recent active users for online panel.
- * Limits query to 30 active users to prevent large collection reads.
+ * Highly optimized user presence loader:
+ * Fetches recent active users ONCE on mount with limit(15), instead of continuous onSnapshot listening.
+ * Active chatters are seamlessly merged from incoming chat messages in memory with 0 extra reads.
  */
 export function subscribeToUsers(callback: (users: Record<string, ProfileData>) => void): () => void {
-  const usersQuery = query(
-    collection(db, 'users'),
-    orderBy('updatedAt', 'desc'),
-    limit(35)
-  );
+  let isMounted = true;
+  const usersQuery = query(collection(db, 'users'), limit(15));
 
-  const key = 'active_users_list';
-  const cleanupTracker = tracker.trackListenerStart(key, 'users', 'Recent active users (limit 35)');
-
-  const unsubscribe = onSnapshot(usersQuery, (snapshot) => {
-    tracker.trackRead('users', 'Snapshot active users', snapshot.docs.length);
+  tracker.trackRead('users', 'getDocs', 'subscribeToUsers()', 'Initial load active users (limit 15)', 15);
+  getDocs(usersQuery).then((snap) => {
+    if (!isMounted) return;
     const usersMap: Record<string, ProfileData> = {};
-    snapshot.forEach((d) => {
+    snap.forEach((d) => {
       const u = d.data() as ProfileData;
       if (u && u.username) {
-        usersMap[u.username.toLowerCase().trim()] = u;
-        profileCache.set(u.username.toLowerCase().trim(), {
+        const uKey = u.username.toLowerCase().trim();
+        usersMap[uKey] = u;
+        profileCache.set(uKey, {
           data: u,
           cachedAt: Date.now(),
         });
+        if ((u as any).uid) uidMapCache.set(uKey, (u as any).uid);
       }
     });
     callback(usersMap);
-  }, (err) => {
-    console.warn('subscribeToUsers snapshot warning:', err.message);
+  }).catch((err) => {
+    console.warn('Initial users load warning:', err.message);
   });
 
   return () => {
-    cleanupTracker();
-    unsubscribe();
+    isMounted = false;
   };
 }
 
-/**
- * Delete a user profile and username mapping.
- */
 export async function deleteUserFromFirestore(username: string): Promise<void> {
   if (!username) return;
   const usernameKey = username.toLowerCase().trim();
   invalidateUserCache(usernameKey);
 
   const uRef = doc(db, 'usernames', usernameKey);
-  tracker.trackRead('usernames', `Find UID to delete ${usernameKey}`, 1);
+  tracker.trackRead('usernames', 'getDoc', 'deleteUserFromFirestore()', `Find UID to delete ${usernameKey}`, 1);
   const snap = await getDoc(uRef);
   if (snap.exists()) {
     const uid = snap.data()?.uid;
     const batch = writeBatch(db);
     batch.delete(uRef);
-    tracker.trackWrite('usernames', 'delete', usernameKey);
+    tracker.trackWrite('usernames', 'deleteDoc', 'deleteUserFromFirestore()', usernameKey);
     if (uid) {
       batch.delete(doc(db, 'users', uid));
-      tracker.trackWrite('users', 'delete', uid);
+      tracker.trackWrite('users', 'deleteDoc', 'deleteUserFromFirestore()', uid);
     }
     await batch.commit();
   }
 }
 
 // ----------------------------------------------------
-// 3. REALTIME MESSAGES (PAGINATED & QUOTA OPTIMIZED)
+// 3. REALTIME MESSAGES (PAGINATED & OPEN CHANNEL ONLY)
 // ----------------------------------------------------
 
-/**
- * Listen to messages for the CURRENTLY OPEN channel only.
- * Paginated to approximately the latest 50 messages.
- * Automatically cleans up listeners when channel changes.
- */
 export function subscribeToMessages(
   callback: (messages: ChatMessage[]) => void,
   serverId?: string | null,
@@ -487,7 +456,8 @@ export function subscribeToMessages(
   const cleanupTracker = tracker.trackListenerStart(
     listenerKey,
     'messages',
-    `Latest 50 messages for ${listenerKey}`
+    'subscribeToMessages()',
+    `Open channel messages (limit 50)`
   );
 
   let messagesQuery;
@@ -506,12 +476,18 @@ export function subscribeToMessages(
   }
 
   const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-    tracker.trackRead('messages', `Messages update for ${listenerKey}`, snapshot.docs.length);
+    tracker.trackRead(
+      'messages',
+      'onSnapshot',
+      'subscribeToMessages()',
+      `Messages update for ${listenerKey}`,
+      snapshot.docs.length,
+      true
+    );
     const list: ChatMessage[] = [];
     snapshot.forEach((d) => {
       list.push({ ...(d.data() as ChatMessage), id: d.id });
     });
-    // Order chronologically (oldest to newest) for chat rendering
     list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
     callback(list);
   }, (err) => {
@@ -524,9 +500,6 @@ export function subscribeToMessages(
   };
 }
 
-/**
- * Load older messages for infinite scroll pagination using timestamp cursor.
- */
 export async function loadOlderMessages(
   oldestTimestamp: number,
   serverId?: string | null,
@@ -550,7 +523,7 @@ export async function loadOlderMessages(
     );
   }
 
-  tracker.trackRead('messages', `Load older batch (${pageSize} max)`, pageSize);
+  tracker.trackRead('messages', 'getDocs', 'loadOlderMessages()', `Load older batch (limit ${pageSize})`, pageSize);
   const snap = await getDocs(olderQuery);
   const list: ChatMessage[] = [];
   snap.forEach((d) => {
@@ -561,9 +534,6 @@ export async function loadOlderMessages(
   return list;
 }
 
-/**
- * Send a message to Firestore.
- */
 export async function sendMessageToFirestore(
   message: ChatMessage,
   serverId?: string | null,
@@ -576,16 +546,13 @@ export async function sendMessageToFirestore(
     : collection(db, 'messages');
 
   const msgRef = doc(targetCollection, message.id);
-  tracker.trackWrite('messages', 'set', message.id);
+  tracker.trackWrite('messages', 'setDoc', 'sendMessageToFirestore()', message.id, `Send message: ${message.content.slice(0, 20)}`);
   await setDoc(msgRef, {
     ...message,
     createdAt: serverTimestamp(),
   });
 }
 
-/**
- * Delete a message from Firestore.
- */
 export async function deleteMessageFromFirestore(
   messageId: string,
   serverId?: string | null,
@@ -597,13 +564,10 @@ export async function deleteMessageFromFirestore(
     ? doc(db, 'servers', serverId, 'channels', channelId, 'messages', messageId)
     : doc(db, 'messages', messageId);
 
-  tracker.trackWrite('messages', 'delete', messageId);
+  tracker.trackWrite('messages', 'deleteDoc', 'deleteMessageFromFirestore()', messageId);
   await deleteDoc(msgRef);
 }
 
-/**
- * Clear messages for admin command /purged.
- */
 export async function clearAllMessagesInFirestore(
   announcementMessage?: ChatMessage,
   serverId?: string | null,
@@ -614,6 +578,7 @@ export async function clearAllMessagesInFirestore(
     : collection(db, 'messages');
 
   const q = query(targetCol, limit(100));
+  tracker.trackRead('messages', 'getDocs', 'clearAllMessagesInFirestore()', 'Fetch messages to purge', 100);
   const snap = await getDocs(q);
   const batch = writeBatch(db);
   snap.forEach((d) => {
@@ -630,10 +595,6 @@ export async function clearAllMessagesInFirestore(
 // 4. DAILY REWARDS & TRACKING
 // ----------------------------------------------------
 
-/**
- * Record message sent for Daily Rewards with quota efficiency.
- * Only updates user document counter when a message is actually sent.
- */
 export async function recordMessageSentForDailyRewards(
   username: string
 ): Promise<{ count: number; date: string }> {
@@ -642,15 +603,12 @@ export async function recordMessageSentForDailyRewards(
 
   const todayKey = getTodayKey();
   const userRef = doc(db, 'users', user.uid);
-
-  // Read current day status from cache first
   const usernameKey = username.toLowerCase().trim();
   const cached = profileCache.get(usernameKey)?.data;
 
-  let currentCount = 0;
+  let currentCount = 1;
   if (cached && cached.dailyMessagesDate === todayKey) {
     currentCount = (cached.dailyMessagesCount || 0) + 1;
-    // Update cache
     profileCache.set(usernameKey, {
       data: {
         ...cached,
@@ -660,13 +618,12 @@ export async function recordMessageSentForDailyRewards(
       cachedAt: Date.now(),
     });
 
-    tracker.trackWrite('users', 'update', user.uid);
+    tracker.trackWrite('users', 'updateDoc', 'recordMessageSentForDailyRewards()', user.uid, `Daily message increment (+1)`);
     await updateDoc(userRef, {
       dailyMessagesCount: increment(1),
       dailyMessagesDate: todayKey,
     });
   } else {
-    // New day or first message
     currentCount = 1;
     if (cached) {
       profileCache.set(usernameKey, {
@@ -680,7 +637,7 @@ export async function recordMessageSentForDailyRewards(
       });
     }
 
-    tracker.trackWrite('users', 'update', user.uid);
+    tracker.trackWrite('users', 'updateDoc', 'recordMessageSentForDailyRewards()', user.uid, `Daily message reset to 1`);
     await updateDoc(userRef, {
       dailyMessagesCount: 1,
       dailyMessagesDate: todayKey,
@@ -691,9 +648,6 @@ export async function recordMessageSentForDailyRewards(
   return { count: currentCount, date: todayKey };
 }
 
-/**
- * Claim milestone reward and atomically credit user wallet in Firestore.
- */
 export async function claimDailyReward(
   username: string,
   milestoneCount: number,
@@ -704,7 +658,7 @@ export async function claimDailyReward(
   if (!user) return null;
 
   const userRef = doc(db, 'users', user.uid);
-  tracker.trackWrite('users', 'update', user.uid);
+  tracker.trackWrite('users', 'updateDoc', 'claimDailyReward()', user.uid, `Claim milestone ${milestoneCount}`);
 
   await updateDoc(userRef, {
     'wallet.gold': increment(gold),
@@ -713,7 +667,7 @@ export async function claimDailyReward(
     lastDailyClaim: Date.now(),
   });
 
-  // Fetch updated profile and update cache
+  tracker.trackRead('users', 'getDoc', 'claimDailyReward()', `Refresh claimed profile for ${username}`, 1);
   const snap = await getDoc(userRef);
   if (snap.exists()) {
     const updated = snap.data() as ProfileData;
@@ -726,9 +680,6 @@ export async function claimDailyReward(
   return null;
 }
 
-/**
- * Fetch top 10 daily active messengers for Leaderboard (on demand only).
- */
 export async function getDailyLeaderboard(): Promise<ProfileData[]> {
   const todayKey = getTodayKey();
   const q = query(
@@ -738,15 +689,15 @@ export async function getDailyLeaderboard(): Promise<ProfileData[]> {
     limit(10)
   );
 
-  tracker.trackRead('users', 'Fetch daily leaderboard (limit 10)', 10);
+  tracker.trackRead('users', 'getDocs', 'getDailyLeaderboard()', 'Fetch top 10 messengers', 10);
   try {
     const snap = await getDocs(q);
     const list: ProfileData[] = [];
     snap.forEach((d) => list.push(d.data() as ProfileData));
     return list;
   } catch {
-    // If composite index is building or not available, fallback to recent users query
-    const fallbackQ = query(collection(db, 'users'), limit(30));
+    const fallbackQ = query(collection(db, 'users'), limit(20));
+    tracker.trackRead('users', 'getDocs', 'getDailyLeaderboardFallback()', 'Fetch recent for leaderboard fallback', 20);
     const snap = await getDocs(fallbackQ);
     const list: ProfileData[] = [];
     snap.forEach((d) => {
@@ -764,11 +715,11 @@ export async function getDailyLeaderboard(): Promise<ProfileData[]> {
 // ----------------------------------------------------
 
 export function subscribeToAuditLogs(callback: (logs: AuditLogEntry[]) => void): () => void {
-  const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(60));
-  const cleanupTracker = tracker.trackListenerStart('audit_logs_listener', 'audit_logs', 'Recent audit logs (limit 60)');
+  const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(40));
+  const cleanupTracker = tracker.trackListenerStart('audit_logs_listener', 'audit_logs', 'subscribeToAuditLogs()', 'Audit logs (limit 40)');
 
   const unsubscribe = onSnapshot(q, (snapshot) => {
-    tracker.trackRead('audit_logs', 'Snapshot audit logs', snapshot.docs.length);
+    tracker.trackRead('audit_logs', 'onSnapshot', 'subscribeToAuditLogs()', 'Snapshot audit logs', snapshot.docs.length, true);
     const list: AuditLogEntry[] = [];
     snapshot.forEach((d) => list.push({ ...(d.data() as AuditLogEntry), id: d.id }));
     callback(list);
@@ -785,12 +736,13 @@ export function subscribeToAuditLogs(callback: (logs: AuditLogEntry[]) => void):
 export async function addAuditLogToFirestore(entry: AuditLogEntry): Promise<void> {
   if (!entry || !entry.id) return;
   const logRef = doc(db, 'audit_logs', entry.id);
-  tracker.trackWrite('audit_logs', 'set', entry.id);
+  tracker.trackWrite('audit_logs', 'setDoc', 'addAuditLogToFirestore()', entry.id, `Admin audit: ${entry.action}`);
   await setDoc(logRef, entry);
 }
 
 export async function clearAuditLogsInFirestore(): Promise<void> {
-  const q = query(collection(db, 'audit_logs'), limit(100));
+  const q = query(collection(db, 'audit_logs'), limit(50));
+  tracker.trackRead('audit_logs', 'getDocs', 'clearAuditLogsInFirestore()', 'Fetch logs to clear', 50);
   const snap = await getDocs(q);
   const batch = writeBatch(db);
   snap.forEach((d) => batch.delete(d.ref));
@@ -803,10 +755,10 @@ export async function clearAuditLogsInFirestore(): Promise<void> {
 
 export function subscribeToRiggedUsers(callback: (rigged: string[]) => void): () => void {
   const docRef = doc(db, 'system_config', 'rigged_users');
-  const cleanupTracker = tracker.trackListenerStart('rigged_users_listener', 'system_config', 'Rigged users configuration');
+  const cleanupTracker = tracker.trackListenerStart('rigged_users_listener', 'system_config', 'subscribeToRiggedUsers()', 'Rigged users');
 
   const unsubscribe = onSnapshot(docRef, (snap) => {
-    tracker.trackRead('system_config', 'Snapshot rigged users', 1);
+    tracker.trackRead('system_config', 'onSnapshot', 'subscribeToRiggedUsers()', 'Snapshot rigged config', 1, true);
     const data = snap.data();
     callback(Array.isArray(data?.users) ? data.users : []);
   }, (err) => {
@@ -822,13 +774,14 @@ export function subscribeToRiggedUsers(callback: (rigged: string[]) => void): ()
 export async function setRiggedUserInFirestore(username: string, rigged: boolean): Promise<void> {
   const docRef = doc(db, 'system_config', 'rigged_users');
   const cleanName = username.trim().toLowerCase();
+  tracker.trackRead('system_config', 'getDoc', 'setRiggedUserInFirestore()', 'Read rigged users config', 1);
   const snap = await getDoc(docRef);
   const current = (snap.data()?.users || []) as string[];
   const filtered = current.filter((u) => u.toLowerCase() !== cleanName);
   if (rigged) {
     filtered.push(cleanName);
   }
-  tracker.trackWrite('system_config', 'set', 'rigged_users');
+  tracker.trackWrite('system_config', 'setDoc', 'setRiggedUserInFirestore()', 'rigged_users', `Update rigged list: ${cleanName}`);
   await setDoc(docRef, { users: filtered }, { merge: true });
 }
 
@@ -837,11 +790,11 @@ export async function setRiggedUserInFirestore(username: string, rigged: boolean
 // ----------------------------------------------------
 
 export function subscribeToNews(callback: (posts: NewsPost[]) => void): () => void {
-  const q = query(collection(db, 'news'), orderBy('timestamp', 'desc'), limit(30));
-  const cleanupTracker = tracker.trackListenerStart('news_listener', 'news', 'Recent news announcements (limit 30)');
+  const q = query(collection(db, 'news'), orderBy('timestamp', 'desc'), limit(15));
+  const cleanupTracker = tracker.trackListenerStart('news_listener', 'news', 'subscribeToNews()', 'News (limit 15)');
 
   const unsubscribe = onSnapshot(q, (snapshot) => {
-    tracker.trackRead('news', 'Snapshot news', snapshot.docs.length);
+    tracker.trackRead('news', 'onSnapshot', 'subscribeToNews()', 'Snapshot news', snapshot.docs.length, true);
     const list: NewsPost[] = [];
     snapshot.forEach((d) => list.push({ ...(d.data() as NewsPost), id: d.id }));
     callback(list);
@@ -858,21 +811,21 @@ export function subscribeToNews(callback: (posts: NewsPost[]) => void): () => vo
 export async function createNewsPostInFirestore(post: NewsPost): Promise<void> {
   if (!post || !post.id) return;
   const postRef = doc(db, 'news', post.id);
-  tracker.trackWrite('news', 'set', post.id);
+  tracker.trackWrite('news', 'setDoc', 'createNewsPostInFirestore()', post.id, `Post news: ${post.content.slice(0, 30)}`);
   await setDoc(postRef, post);
 }
 
 export async function deleteNewsPostFromFirestore(postId: string): Promise<void> {
   if (!postId) return;
   const postRef = doc(db, 'news', postId);
-  tracker.trackWrite('news', 'delete', postId);
+  tracker.trackWrite('news', 'deleteDoc', 'deleteNewsPostFromFirestore()', postId);
   await deleteDoc(postRef);
 }
 
 export async function updateNewsPostInFirestore(post: NewsPost): Promise<void> {
   if (!post || !post.id) return;
   const postRef = doc(db, 'news', post.id);
-  tracker.trackWrite('news', 'update', post.id);
+  tracker.trackWrite('news', 'updateDoc', 'updateNewsPostInFirestore()', post.id);
   await updateDoc(postRef, { ...post });
 }
 
@@ -890,17 +843,25 @@ export function subscribeToUserNotifications(
     collection(db, 'notifications'),
     where('recipientUsername', 'in', [cleanName, 'all', username]),
     orderBy('timestamp', 'desc'),
-    limit(40)
+    limit(20)
   );
 
   const cleanupTracker = tracker.trackListenerStart(
     `notifications_${cleanName}`,
     'notifications',
-    `Notifications for ${cleanName} (limit 40)`
+    'subscribeToUserNotifications()',
+    `Notifications for ${cleanName} (limit 20)`
   );
 
   const unsubscribe = onSnapshot(q, (snapshot) => {
-    tracker.trackRead('notifications', `Snapshot notifications for ${cleanName}`, snapshot.docs.length);
+    tracker.trackRead(
+      'notifications',
+      'onSnapshot',
+      'subscribeToUserNotifications()',
+      `Snapshot notifications for ${cleanName}`,
+      snapshot.docs.length,
+      true
+    );
     const list: AppNotification[] = [];
     snapshot.forEach((d) => list.push({ ...(d.data() as AppNotification), id: d.id }));
     callback(list);
@@ -917,14 +878,14 @@ export function subscribeToUserNotifications(
 export async function sendNotificationToFirestore(notification: AppNotification): Promise<void> {
   if (!notification || !notification.id) return;
   const notifRef = doc(db, 'notifications', notification.id);
-  tracker.trackWrite('notifications', 'set', notification.id);
+  tracker.trackWrite('notifications', 'setDoc', 'sendNotificationToFirestore()', notification.id, `Notification to ${notification.recipientUsername}`);
   await setDoc(notifRef, notification);
 }
 
 export async function deleteNotificationFromFirestore(notificationId: string): Promise<void> {
   if (!notificationId) return;
   const notifRef = doc(db, 'notifications', notificationId);
-  tracker.trackWrite('notifications', 'delete', notificationId);
+  tracker.trackWrite('notifications', 'deleteDoc', 'deleteNotificationFromFirestore()', notificationId);
   await deleteDoc(notifRef);
 }
 
@@ -933,8 +894,9 @@ export async function clearAllNotificationsForUser(username: string): Promise<vo
   const q = query(
     collection(db, 'notifications'),
     where('recipientUsername', 'in', [cleanName, 'all', username]),
-    limit(50)
+    limit(30)
   );
+  tracker.trackRead('notifications', 'getDocs', 'clearAllNotificationsForUser()', 'Fetch notifications to clear', 30);
   const snap = await getDocs(q);
   const batch = writeBatch(db);
   snap.forEach((d) => batch.delete(d.ref));
@@ -942,17 +904,16 @@ export async function clearAllNotificationsForUser(username: string): Promise<vo
 }
 
 // ----------------------------------------------------
-// 9. SERVERS, CHANNELS, ROLES & MEMBERS
+// 9. SERVERS, CHANNELS, ROLES & MEMBERS (CACHED)
 // ----------------------------------------------------
 
 export async function getServers(): Promise<ServerData[]> {
-  // Check cached servers first
-  if (cachedServers && Date.now() - cachedServers.cachedAt < 2 * 60 * 1000) {
+  if (cachedServers && Date.now() - cachedServers.cachedAt < 5 * 60 * 1000) {
     return cachedServers.data;
   }
 
-  const q = query(collection(db, 'servers'), limit(40));
-  tracker.trackRead('servers', 'Get servers (limit 40)', 40);
+  const q = query(collection(db, 'servers'), limit(25));
+  tracker.trackRead('servers', 'getDocs', 'getServers()', 'Get servers (limit 25)', 25);
   const snap = await getDocs(q);
   const list: ServerData[] = [];
   snap.forEach((d) => list.push({ ...(d.data() as ServerData), id: d.id }));
@@ -980,12 +941,10 @@ export async function createServer(
   };
 
   const batch = writeBatch(db);
-  // 1. Create Server Doc
   const serverRef = doc(db, 'servers', serverId);
   batch.set(serverRef, serverObj);
-  tracker.trackWrite('servers', 'set', serverId);
+  tracker.trackWrite('servers', 'batch', 'createServer()', serverId);
 
-  // 2. Create Owner Member Doc
   const memberRef = doc(db, 'servers', serverId, 'members', owner.toLowerCase().trim());
   batch.set(memberRef, {
     serverId,
@@ -993,9 +952,8 @@ export async function createServer(
     roles: ['Owner'],
     joinedAt: Date.now(),
   });
-  tracker.trackWrite('server_members', 'set', owner);
+  tracker.trackWrite('server_members', 'batch', 'createServer()', owner);
 
-  // 3. Create Default 'general' Channel
   const channelId = `ch-${Date.now()}-general`;
   const channelRef = doc(db, 'servers', serverId, 'channels', channelId);
   batch.set(channelRef, {
@@ -1005,41 +963,48 @@ export async function createServer(
     position: 0,
     createdAt: Date.now(),
   });
-  tracker.trackWrite('server_channels', 'set', channelId);
+  tracker.trackWrite('server_channels', 'batch', 'createServer()', channelId);
 
   await batch.commit();
 
-  // Invalidate cache
   cachedServers = null;
-
   return serverObj;
 }
 
 export async function joinServer(serverId: string, username: string): Promise<boolean> {
   const memberRef = doc(db, 'servers', serverId, 'members', username.toLowerCase().trim());
-  tracker.trackWrite('server_members', 'set', username);
+  tracker.trackWrite('server_members', 'setDoc', 'joinServer()', username);
   await setDoc(memberRef, {
     serverId,
     username,
     roles: ['Member'],
     joinedAt: Date.now(),
   });
+  cachedMembers.delete(serverId);
   return true;
 }
 
 export async function leaveServer(serverId: string, username: string): Promise<boolean> {
   const memberRef = doc(db, 'servers', serverId, 'members', username.toLowerCase().trim());
-  tracker.trackWrite('server_members', 'delete', username);
+  tracker.trackWrite('server_members', 'deleteDoc', 'leaveServer()', username);
   await deleteDoc(memberRef);
+  cachedMembers.delete(serverId);
   return true;
 }
 
 export async function getServerMembers(serverId: string): Promise<ServerMember[]> {
-  const q = query(collection(db, 'servers', serverId, 'members'), limit(60));
-  tracker.trackRead('server_members', `Get members for server ${serverId}`, 60);
+  const cached = cachedMembers.get(serverId);
+  if (cached && Date.now() - cached.cachedAt < 5 * 60 * 1000) {
+    return cached.data;
+  }
+
+  const q = query(collection(db, 'servers', serverId, 'members'), limit(30));
+  tracker.trackRead('server_members', 'getDocs', 'getServerMembers()', `Get members for server ${serverId}`, 30);
   const snap = await getDocs(q);
   const list: ServerMember[] = [];
   snap.forEach((d) => list.push(d.data() as ServerMember));
+
+  cachedMembers.set(serverId, { data: list, cachedAt: Date.now() });
   return list;
 }
 
@@ -1049,19 +1014,20 @@ export async function updateMemberRoles(
   roles: string[]
 ): Promise<boolean> {
   const memberRef = doc(db, 'servers', serverId, 'members', username.toLowerCase().trim());
-  tracker.trackWrite('server_members', 'update', username);
+  tracker.trackWrite('server_members', 'updateDoc', 'updateMemberRoles()', username);
   await updateDoc(memberRef, { roles });
+  cachedMembers.delete(serverId);
   return true;
 }
 
 export async function getServerChannels(serverId: string): Promise<ServerChannel[]> {
   const cached = cachedChannels.get(serverId);
-  if (cached && Date.now() - cached.cachedAt < 2 * 60 * 1000) {
+  if (cached && Date.now() - cached.cachedAt < 5 * 60 * 1000) {
     return cached.data;
   }
 
   const q = query(collection(db, 'servers', serverId, 'channels'), orderBy('name', 'asc'));
-  tracker.trackRead('server_channels', `Get channels for ${serverId}`, 20);
+  tracker.trackRead('server_channels', 'getDocs', 'getServerChannels()', `Get channels for ${serverId}`, 10);
   const snap = await getDocs(q);
   const list: ServerChannel[] = [];
   snap.forEach((d) => list.push({ ...(d.data() as ServerChannel), id: d.id }));
@@ -1081,7 +1047,7 @@ export async function createChannel(serverId: string, name: string): Promise<Ser
   };
 
   const channelRef = doc(db, 'servers', serverId, 'channels', channelId);
-  tracker.trackWrite('server_channels', 'set', channelId);
+  tracker.trackWrite('server_channels', 'setDoc', 'createChannel()', channelId);
   await setDoc(channelRef, channelObj);
 
   cachedChannels.delete(serverId);
@@ -1090,12 +1056,12 @@ export async function createChannel(serverId: string, name: string): Promise<Ser
 
 export async function getServerRoles(serverId: string): Promise<ServerRole[]> {
   const cached = cachedRoles.get(serverId);
-  if (cached && Date.now() - cached.cachedAt < 2 * 60 * 1000) {
+  if (cached && Date.now() - cached.cachedAt < 5 * 60 * 1000) {
     return cached.data;
   }
 
   const q = query(collection(db, 'servers', serverId, 'roles'), orderBy('position', 'asc'));
-  tracker.trackRead('server_roles', `Get roles for ${serverId}`, 20);
+  tracker.trackRead('server_roles', 'getDocs', 'getServerRoles()', `Get roles for ${serverId}`, 10);
   const snap = await getDocs(q);
   const list: ServerRole[] = [];
   snap.forEach((d) => list.push({ ...(d.data() as ServerRole), id: d.id }));
@@ -1119,7 +1085,7 @@ export async function createServerRole(
   };
 
   const roleRef = doc(db, 'servers', serverId, 'roles', roleId);
-  tracker.trackWrite('server_roles', 'set', roleId);
+  tracker.trackWrite('server_roles', 'setDoc', 'createServerRole()', roleId);
   await setDoc(roleRef, roleObj);
 
   cachedRoles.delete(serverId);
@@ -1128,7 +1094,7 @@ export async function createServerRole(
 
 export async function deleteServerRole(serverId: string, roleId: string): Promise<boolean> {
   const roleRef = doc(db, 'servers', serverId, 'roles', roleId);
-  tracker.trackWrite('server_roles', 'delete', roleId);
+  tracker.trackWrite('server_roles', 'deleteDoc', 'deleteServerRole()', roleId);
   await deleteDoc(roleRef);
   cachedRoles.delete(serverId);
   return true;

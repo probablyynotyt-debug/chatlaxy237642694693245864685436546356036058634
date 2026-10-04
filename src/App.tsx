@@ -139,8 +139,8 @@ export default function App() {
     setScreenStep('chat');
   };
 
-  // Update profile immediately when modified (e.g. from bio editor, store purchases, etc.)
-  const handleUpdateCurrentUser = async (updated: ProfileData) => {
+  // Update profile in state; only write to Firestore if explicitly requested
+  const handleUpdateCurrentUser = async (updated: ProfileData, persistToDb: boolean = false) => {
     const completeProfile: ProfileData = {
       ...updated,
       rank: updated.rank ?? getDefaultRankForUsername(updated.username),
@@ -150,10 +150,12 @@ export default function App() {
       },
     };
     setCurrentUserProfile(completeProfile);
-    try {
-      await saveUserToFirestore(completeProfile);
-    } catch (err) {
-      console.warn('User update error:', err);
+    if (persistToDb) {
+      try {
+        await saveUserToFirestore(completeProfile);
+      } catch (err) {
+        console.warn('User update error:', err);
+      }
     }
   };
 
