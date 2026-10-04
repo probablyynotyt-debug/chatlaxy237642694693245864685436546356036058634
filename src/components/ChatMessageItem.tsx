@@ -5,6 +5,7 @@ import { ProfileData } from '../types/bio';
 import { UserAvatar } from './UserAvatar';
 import { RubyIcon, GoldIcon } from './CurrencyIcons';
 import { getTextStyleCSS } from '../utils/textStylePresets';
+import { VoiceMessagePlayer } from './VoiceMessagePlayer';
 
 interface ChatMessageItemProps {
   message: ChatMessage;
@@ -226,15 +227,53 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
               </div>
             </div>
           ) : (
-            /* Standard text message content */
-            <p
-              style={contentInlineStyle}
-              className={`text-xs sm:text-sm leading-relaxed break-words whitespace-pre-wrap select-text tracking-normal ${
-                !contentStyleConfig?.colorValue ? 'text-neutral-200' : ''
-              }`}
-            >
-              {message.content}
-            </p>
+            /* Standard text message content & media attachments */
+            <div className="flex flex-col gap-2">
+              {message.content && (
+                <p
+                  style={contentInlineStyle}
+                  className={`text-xs sm:text-sm leading-relaxed break-words whitespace-pre-wrap select-text tracking-normal ${
+                    !contentStyleConfig?.colorValue ? 'text-neutral-200' : ''
+                  }`}
+                >
+                  {message.content}
+                </p>
+              )}
+
+              {/* Render Audio / Video / Image Media Attachment */}
+              {message.mediaUrl && (
+                <div className="mt-1">
+                  {message.mediaType === 'audio' || message.mediaUrl.match(/\.(mp3|wav|ogg|webm|m4a|aac)(\?.*)?$/i) ? (
+                    <VoiceMessagePlayer src={message.mediaUrl} duration={(message as any).audioDuration} />
+                  ) : message.mediaType === 'video' || message.mediaUrl.match(/\.(mp4|webm|mov|ogg)(\?.*)?$/i) ? (
+                    <div className="max-w-sm sm:max-w-md rounded-lg overflow-hidden border border-[#2b2d3c] bg-[#101115] shadow-md">
+                      <video
+                        src={message.mediaUrl}
+                        controls
+                        preload="metadata"
+                        className="w-full max-h-72 object-contain bg-black rounded-lg"
+                      />
+                    </div>
+                  ) : (
+                    <div className="max-w-sm sm:max-w-md rounded-lg overflow-hidden border border-[#2b2d3c] bg-[#101115] shadow-md">
+                      <a
+                        href={message.mediaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block group/media relative overflow-hidden cursor-zoom-in"
+                      >
+                        <img
+                          src={message.mediaUrl}
+                          alt="Shared image"
+                          className="w-full max-h-80 object-contain rounded-lg transition-transform duration-200 group-hover/media:scale-[1.01]"
+                          loading="lazy"
+                        />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

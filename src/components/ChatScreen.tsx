@@ -15,7 +15,15 @@ import {
   Settings,
   Plus,
   Compass,
+  Paperclip,
+  Image as ImageIcon,
+  Video,
+  Mic,
+  Square,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
+import { uploadNewsMediaToCloudinary } from '../utils/cloudinary';
 import { ChatMessage, ReplyContext } from '../types/chat';
 import { ProfileData } from '../types/bio';
 import { ChatMessageItem } from './ChatMessageItem';
@@ -120,6 +128,24 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const [serverMembers, setServerMembers] = useState<ServerMember[]>([]);
   const [isCreateServerModalOpen, setIsCreateServerModalOpen] = useState(false);
   const [isServerAdminOpen, setIsServerAdminOpen] = useState(false);
+
+  // Chat Media Attachment State (Pictures, Videos, Audio)
+  const [attachedMedia, setAttachedMedia] = useState<{
+    url: string;
+    type: 'image' | 'video' | 'gif' | 'audio';
+    name: string;
+    duration?: number;
+  } | null>(null);
+  const [isUploadingChatMedia, setIsUploadingChatMedia] = useState(false);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+
+  // Voice Message Recording State
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<any>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
@@ -339,7 +365,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
-  const handlePublishNews = async (content: string, mediaUrl?: string | null, mediaType?: 'image' | 'video' | 'gif' | null) => {
+  const handlePublishNews = async (content: string, mediaUrl?: string | null, mediaType?: 'image' | 'video' | 'gif' | 'audio' | null) => {
     const newPost: NewsPost = {
       id: `news-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorUsername: currentUser.username,
@@ -400,6 +426,171 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     await updateNewsPost(updatedPost);
   };
 
+  // Handle selecting chat media (Image, GIF, or Video)
+  const handleMediaSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingChatMedia(true);
+    try {
+      const res = await uploadNewsMediaToCloudinary(file);
+      setAttachedMedia({
+        url: res.url,
+        type: res.type,
+        name: file.name,
+      });
+    } catch (err) {
+      console.warn('Chat media upload failed:', err);
+      setPrivateNotice({
+        type: 'error',
+        message: 'Could not upload media. Please try another image or video.',
+      });
+    } finally {
+      setIsUploadingChatMedia(false);
+      if (mediaInputRef.current) mediaInputRef.current.value = '';
+    }
+  };
+
+  // Voice Message Recording Logic
+  const startVoiceRecording = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setPrivateNotice({
+          type: 'error',
+          message: 'Microphone access is not supported by your browser.',
+        });
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.start(200);
+      setIsRecordingVoice(true);
+      setRecordingSeconds(0);
+
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.warn('Microphone error:', err);
+      setPrivateNotice({
+        type: 'error',
+        message: 'Could not access microphone. Please allow microphone permissions.',
+      });
+    }
+  };
+
+  const stopAndSendVoiceRecording = async () => {
+    if (!mediaRecorderRef.current || !isRecordingVoice) return;
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    const duration = Math.max(recordingSeconds, 1);
+    setIsRecordingVoice(false);
+    setIsUploadingChatMedia(true);
+
+    const recorder = mediaRecorderRef.current;
+    recorder.onstop = async () => {
+      try {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+
+        const res = await uploadNewsMediaToCloudinary(audioFile);
+
+        const now = new Date();
+        const formattedTime = now.toLocaleTimeString([], {
+          hour: 'numeric',
+          minute: '2-digit',
+        });
+
+        const targetChannelId = activeChannel?.id || (channels.length > 0 ? channels[0].id : 'general');
+
+        const voiceMessage: ChatMessage = {
+          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          senderId: 'user',
+          senderName: currentUser.username,
+          senderHandle: `@${currentUser.username.toLowerCase().replace(/\s+/g, '')}`,
+          senderAvatar: currentUser.profilePicture,
+          senderAvatarFrame: currentUser.avatarFrame || currentUser.effects?.pfpBorder || null,
+          senderRank: effectiveRank as any,
+          senderCustomRankName: effectiveCustomRankName,
+          senderUsernameStyle: currentUser.usernameStyle || null,
+          contentStyle: currentUser.chatTextStyle || null,
+          isSystemBot: false,
+          content: '🎤 Voice Message',
+          mediaUrl: res.url,
+          mediaType: 'audio',
+          audioDuration: duration,
+          timestamp: Date.now(),
+          formattedTime,
+          serverId: activeServer?.id || null,
+          channelId: activeServer ? targetChannelId : null,
+          replyTo: replyContext
+            ? {
+                id: replyContext.messageId,
+                senderName: replyContext.senderName,
+                content: replyContext.content,
+              }
+            : null,
+        } as any;
+
+        setReplyContext(null);
+        await sendMessage(
+          voiceMessage,
+          activeServer?.id || null,
+          activeServer ? targetChannelId : null
+        );
+      } catch (uploadErr) {
+        console.warn('Voice message upload failed:', uploadErr);
+        setPrivateNotice({
+          type: 'error',
+          message: 'Failed to send voice message. Please try again.',
+        });
+      } finally {
+        setIsUploadingChatMedia(false);
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+      }
+    };
+
+    recorder.stop();
+  };
+
+  const cancelVoiceRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.onstop = null;
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    audioChunksRef.current = [];
+    setIsRecordingVoice(false);
+    setRecordingSeconds(0);
+  };
+
   // Determine server permissions & ranks
   const isServerOwner = activeServer
     ? activeServer.owner.toLowerCase().trim() === currentUser.username.toLowerCase().trim()
@@ -429,7 +620,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputText.trim();
-    if (!trimmed) return;
+    const hasMedia = Boolean(attachedMedia);
+
+    if (!trimmed && !hasMedia) return;
 
     // Check slash commands (e.g. /dice, /allin, /daily, /flip, /clear)
     if (trimmed.startsWith('/')) {
@@ -502,6 +695,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       contentStyle: currentUser.chatTextStyle || null,
       isSystemBot: false,
       content: trimmed,
+      mediaUrl: attachedMedia?.url || null,
+      mediaType: attachedMedia?.type || null,
       timestamp: Date.now(),
       formattedTime,
       serverId: activeServer?.id || null,
@@ -517,6 +712,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
 
     setInputText('');
     setReplyContext(null);
+    setAttachedMedia(null);
 
     try {
       await sendMessage(
@@ -765,18 +961,16 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                   </div>
                 </div>
 
-                {/* Right actions: Server Admin (Dev only) & Back to Main Chat */}
+                {/* Right actions: Server Admin & Back to Main Chat */}
                 <div className="flex items-center gap-2">
-                  {isServerOwner && (
-                    <button
-                      type="button"
-                      onClick={() => setIsServerAdminOpen(true)}
-                      className="py-1 px-2.5 bg-gradient-to-r from-purple-700 to-violet-600 hover:from-purple-600 hover:to-violet-500 text-white text-[11px] font-bold rounded-md shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
-                    >
-                      <Crown className="w-3 h-3 text-amber-300" />
-                      <span>Server Settings (Dev)</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsServerAdminOpen(true)}
+                    className="py-1 px-2.5 bg-gradient-to-r from-purple-700 to-violet-600 hover:from-purple-600 hover:to-violet-500 text-white text-[11px] font-bold rounded-md shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Crown className="w-3 h-3 text-amber-300" />
+                    <span>Server Settings & Admin</span>
+                  </button>
 
                   <button
                     type="button"
@@ -916,38 +1110,154 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                   </div>
                 )}
 
-                {/* Input Form */}
-                <form onSubmit={handleSendMessage} className="flex items-center gap-2 w-full">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    placeholder={
-                      activeServer
-                        ? `Message #${activeChannel?.name || 'general'} in ${activeServer.name}...`
-                        : 'Type a message or command (/dice, /allin, /daily)...'
-                    }
-                    className="flex-1 px-4 py-2.5 bg-[#111215] border border-[#2c2d35] hover:border-zinc-600 focus:border-zinc-400 rounded-md text-sm text-neutral-100 placeholder-neutral-500 outline-none transition-colors"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!inputText.trim()}
-                    className="py-2.5 px-4 bg-zinc-200 hover:bg-white disabled:opacity-40 disabled:hover:bg-zinc-200 text-zinc-950 font-medium text-xs sm:text-sm rounded-md transition-colors flex items-center gap-1.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    <span>Send</span>
-                    <Send className="w-3.5 h-3.5" />
-                  </button>
-                </form>
+                {/* Attached Media Preview Banner */}
+                {attachedMedia && (
+                  <div className="flex items-center justify-between p-2 bg-[#1b1d27] border border-violet-500/40 rounded-md text-xs text-neutral-200 animate-in fade-in duration-150">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-8 h-8 rounded bg-[#13141a] border border-[#2d3040] overflow-hidden flex items-center justify-center shrink-0">
+                        {attachedMedia.type === 'video' ? (
+                          <Video className="w-4 h-4 text-violet-400" />
+                        ) : (
+                          <img src={attachedMedia.url} alt="Preview" className="w-full h-full object-cover" />
+                        )}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-semibold text-neutral-100 truncate text-[11px]">{attachedMedia.name}</span>
+                        <span className="text-[10px] text-violet-300 uppercase">{attachedMedia.type} Attached</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAttachedMedia(null)}
+                      className="p-1 text-neutral-400 hover:text-red-400 hover:bg-red-950/40 rounded transition-colors cursor-pointer"
+                      title="Remove attachment"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Uploading Media Spinner Indicator */}
+                {isUploadingChatMedia && (
+                  <div className="flex items-center gap-2 p-2 bg-[#1b1d27] border border-[#2a2c3a] rounded-md text-xs text-neutral-300 animate-pulse">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400" />
+                    <span>Uploading media to Cloudinary...</span>
+                  </div>
+                )}
+
+                {/* Input Form or Active Voice Recording Bar */}
+                {isRecordingVoice ? (
+                  <div className="flex items-center justify-between gap-3 w-full bg-[#1c1427] border border-violet-500/60 rounded-lg p-2.5 shadow-lg animate-in fade-in duration-150">
+                    {/* Recording Status & Waveform Animation */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full bg-red-500 animate-ping shrink-0" />
+                        <span className="text-xs font-bold text-red-400 uppercase tracking-wider">Recording</span>
+                      </div>
+
+                      <span className="text-xs font-mono font-bold text-neutral-100 bg-[#120d1c] px-2 py-0.5 rounded border border-violet-900/50">
+                        {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60) < 10 ? '0' : ''}{recordingSeconds % 60}
+                      </span>
+
+                      {/* Animated audio equalizer visualizer */}
+                      <div className="hidden sm:flex items-center gap-1 h-5">
+                        {[40, 75, 55, 90, 65, 85, 45, 95, 70, 60].map((h, idx) => (
+                          <div
+                            key={idx}
+                            style={{ height: `${h}%` }}
+                            className="w-1 bg-violet-400 rounded-full animate-pulse"
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Actions: Cancel or Send Voice Message */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={cancelVoiceRecording}
+                        className="py-1.5 px-3 bg-[#2a1b2e] hover:bg-red-950/80 text-neutral-300 hover:text-red-300 text-xs font-semibold rounded-md border border-red-900/40 transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Cancel voice message"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Cancel</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={stopAndSendVoiceRecording}
+                        className="py-1.5 px-3.5 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white text-xs font-bold rounded-md shadow-md transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                        title="Send voice message"
+                      >
+                        <span>Send Audio</span>
+                        <Send className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSendMessage} className="flex items-center gap-2 w-full">
+                    {/* Media Upload Button (Pictures & Videos) */}
+                    <button
+                      type="button"
+                      onClick={() => mediaInputRef.current?.click()}
+                      disabled={isUploadingChatMedia}
+                      title="Upload picture or video"
+                      className="p-2.5 bg-[#1a1b22] hover:bg-[#232532] text-neutral-400 hover:text-violet-300 border border-[#2b2d39] hover:border-violet-500/50 rounded-md transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                    <input
+                      ref={mediaInputRef}
+                      type="file"
+                      accept="image/*,video/*"
+                      onChange={handleMediaSelect}
+                      className="hidden"
+                    />
+
+                    {/* Voice Message Record Button */}
+                    <button
+                      type="button"
+                      onClick={startVoiceRecording}
+                      disabled={isUploadingChatMedia}
+                      title="Record voice message"
+                      className="p-2.5 bg-[#1a1b22] hover:bg-violet-950/40 text-neutral-400 hover:text-violet-300 border border-[#2b2d39] hover:border-violet-500/50 rounded-md transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      <Mic className="w-4 h-4" />
+                    </button>
+
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      placeholder={
+                        activeServer
+                          ? `Message #${activeChannel?.name || 'general'} in ${activeServer.name}...`
+                          : 'Type a message or command (/dice, /allin, /daily)...'
+                      }
+                      className="flex-1 px-4 py-2.5 bg-[#111215] border border-[#2c2d35] hover:border-zinc-600 focus:border-zinc-400 rounded-md text-sm text-neutral-100 placeholder-neutral-500 outline-none transition-colors"
+                    />
+                    <button
+                      type="submit"
+                      disabled={(!inputText.trim() && !attachedMedia) || isUploadingChatMedia}
+                      className="py-2.5 px-4 bg-zinc-200 hover:bg-white disabled:opacity-40 disabled:hover:bg-zinc-200 text-zinc-950 font-medium text-xs sm:text-sm rounded-md transition-colors flex items-center gap-1.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      <span>Send</span>
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                )}
               </div>
             </footer>
           </div>
         )}
 
-        {/* Right-Side Online Players Panel */}
+        {/* Right-Side Online Players Panel (Filtered to active server space if inside one) */}
         <OnlinePlayersPanel
           currentUser={currentUser}
           allUsers={allUsers}
+          server={activeServer}
+          serverMembers={serverMembers}
           onOpenProfile={(userId) => setActiveProfileTarget(userId)}
         />
       </div>

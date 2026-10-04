@@ -3,7 +3,7 @@ import { Upload, X, Send, Image, Video, Loader2 } from 'lucide-react';
 import { uploadNewsMediaToCloudinary } from '../utils/cloudinary';
 
 interface NewsComposerProps {
-  onPublish: (content: string, mediaUrl?: string | null, mediaType?: 'image' | 'video' | 'gif' | null) => Promise<void>;
+  onPublish: (content: string, mediaUrl?: string | null, mediaType?: 'image' | 'video' | 'gif' | 'audio' | null) => Promise<void>;
   onCancel?: () => void;
   compact?: boolean;
 }
@@ -16,7 +16,7 @@ export const NewsComposer: React.FC<NewsComposerProps> = ({
   const [content, setContent] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [mediaType, setMediaType] = useState<'image' | 'video' | 'gif' | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video' | 'gif' | 'audio' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

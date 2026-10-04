@@ -28,6 +28,10 @@ export interface ChatMessage {
   isClearChatMessage?: boolean;
   clearedBy?: string;
   content: string;
+  mediaUrl?: string | null;
+  mediaType?: 'image' | 'video' | 'gif' | 'audio' | null;
+  attachments?: { url: string; type: 'image' | 'video' | 'gif' | 'audio'; name?: string }[] | null;
+  audioDuration?: number;
   timestamp: number;
   formattedTime: string;
   gamblePayload?: GambleResultPayload;

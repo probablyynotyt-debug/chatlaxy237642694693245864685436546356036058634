@@ -426,6 +426,9 @@ export async function initDatabase() {
       ALTER TABLE messages ADD COLUMN IF NOT EXISTS isSystemBot INT DEFAULT 0;
       ALTER TABLE messages ADD COLUMN IF NOT EXISTS replyTo TEXT;
       ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS mediaUrl TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS mediaType TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS gamblePayload TEXT;
 
       ALTER TABLE servers ADD COLUMN IF NOT EXISTS iconUrl TEXT;
       ALTER TABLE servers ADD COLUMN IF NOT EXISTS bannerUrl TEXT;
@@ -623,7 +626,7 @@ export async function initDatabase() {
     lastDailyClaim: 'INTEGER DEFAULT 0',
   });
 
-  ensureSqliteColumns('messages', {
+    ensureSqliteColumns('messages', {
     serverId: 'TEXT',
     channelId: 'TEXT',
     senderAvatar: 'TEXT',
@@ -634,6 +637,9 @@ export async function initDatabase() {
     isSystemBot: 'INTEGER DEFAULT 0',
     replyTo: 'TEXT',
     attachments: 'TEXT',
+    mediaUrl: 'TEXT',
+    mediaType: 'TEXT',
+    gamblePayload: 'TEXT',
   });
 
   ensureSqliteColumns('servers', {

@@ -443,7 +443,14 @@ app.put('/api/users/:username', verifyAuth, async (req, res) => {
     );
 
     const updated = await getOne('SELECT * FROM users WHERE LOWER(username) = ?', [targetUsername]);
-    return res.json(formatUser(updated));
+    const formattedUser = formatUser(updated);
+
+    broadcast({
+      type: 'user_updated',
+      user: formattedUser,
+    });
+
+    return res.json(formattedUser);
   } catch (err) {
     console.error('Update user error:', err);
     return res.status(500).json({ error: err.message });
@@ -464,6 +471,10 @@ app.delete('/api/users/:username', verifyAuth, async (req, res) => {
   try {
     const targetUsername = req.params.username.toLowerCase().trim();
     await execute('DELETE FROM users WHERE LOWER(username) = ?', [targetUsername]);
+    broadcast({
+      type: 'user_deleted',
+      username: targetUsername,
+    });
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -491,10 +502,13 @@ function formatMessage(row) {
     senderAvatarFrame: row.senderAvatarFrame || null,
     senderRank: row.senderRank || 'VIP',
     senderCustomRankName: row.senderCustomRankName || null,
-    senderUsernameStyle: row.senderUsernameStyle ? JSON.parse(row.senderUsernameStyle) : null,
+    senderUsernameStyle: row.senderUsernameStyle ? (typeof row.senderUsernameStyle === 'string' ? JSON.parse(row.senderUsernameStyle) : row.senderUsernameStyle) : null,
     isSystemBot: Boolean(row.isSystemBot),
-    replyTo: row.replyTo ? JSON.parse(row.replyTo) : null,
-    attachments: row.attachments ? JSON.parse(row.attachments) : null,
+    replyTo: row.replyTo ? (typeof row.replyTo === 'string' ? JSON.parse(row.replyTo) : row.replyTo) : null,
+    attachments: row.attachments ? (typeof row.attachments === 'string' ? JSON.parse(row.attachments) : row.attachments) : null,
+    mediaUrl: row.mediaUrl || null,
+    mediaType: row.mediaType || null,
+    gamblePayload: row.gamblePayload ? (typeof row.gamblePayload === 'string' ? JSON.parse(row.gamblePayload) : row.gamblePayload) : null,
   };
 }
 
@@ -540,8 +554,8 @@ app.get('/api/messages', async (req, res) => {
 app.post('/api/messages', optionalAuth, async (req, res) => {
   try {
     const msg = req.body;
-    if (!msg || !msg.content || !msg.senderName) {
-      return res.status(400).json({ error: 'Message content and senderName are required' });
+    if (!msg || (!msg.content && !msg.mediaUrl) || !msg.senderName) {
+      return res.status(400).json({ error: 'Message content or media and senderName are required' });
     }
 
     const id = msg.id || `msg-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -553,14 +567,14 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
       `INSERT INTO messages (
         id, serverId, channelId, senderName, content, timestamp,
         senderAvatar, senderAvatarFrame, senderRank, senderCustomRankName,
-        senderUsernameStyle, isSystemBot, replyTo, attachments, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        senderUsernameStyle, isSystemBot, replyTo, attachments, mediaUrl, mediaType, gamblePayload, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         serverId,
         channelId,
         msg.senderName,
-        msg.content,
+        msg.content || '',
         timestamp,
         msg.senderAvatar || null,
         msg.senderAvatarFrame || null,
@@ -570,6 +584,9 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
         msg.isSystemBot ? 1 : 0,
         msg.replyTo ? JSON.stringify(msg.replyTo) : null,
         msg.attachments ? JSON.stringify(msg.attachments) : null,
+        msg.mediaUrl || null,
+        msg.mediaType || null,
+        msg.gamblePayload ? JSON.stringify(msg.gamblePayload) : null,
         Date.now(),
       ]
     );
@@ -579,7 +596,7 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
       serverId,
       channelId,
       senderName: msg.senderName,
-      content: msg.content,
+      content: msg.content || '',
       timestamp,
       senderAvatar: msg.senderAvatar,
       senderAvatarFrame: msg.senderAvatarFrame,
@@ -589,6 +606,9 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
       isSystemBot: msg.isSystemBot ? 1 : 0,
       replyTo: msg.replyTo ? JSON.stringify(msg.replyTo) : null,
       attachments: msg.attachments ? JSON.stringify(msg.attachments) : null,
+      mediaUrl: msg.mediaUrl || null,
+      mediaType: msg.mediaType || null,
+      gamblePayload: msg.gamblePayload ? JSON.stringify(msg.gamblePayload) : null,
     });
 
     broadcast({

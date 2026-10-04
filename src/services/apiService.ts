@@ -189,9 +189,20 @@ export function subscribeToUsers(callback: (users: Record<string, ProfileData>) 
     callback({ ...userMap });
   });
 
+  const unsubUserUpdated = socketService.onUserUpdated((updatedUser) => {
+    if (!isMounted || !updatedUser?.username) return;
+    const key = updatedUser.username.toLowerCase().trim();
+    userMap[key] = {
+      ...(userMap[key] || {}),
+      ...updatedUser,
+    };
+    callback({ ...userMap });
+  });
+
   return () => {
     isMounted = false;
     unsubPresence();
+    unsubUserUpdated();
   };
 }
 

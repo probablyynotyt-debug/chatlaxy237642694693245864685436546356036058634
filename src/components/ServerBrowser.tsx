@@ -220,13 +220,13 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({
                   }}
                   className="group relative bg-[#171822] hover:bg-[#1a1c27] border border-[#262837] hover:border-violet-500/50 rounded-xl overflow-hidden shadow-lg transition-all duration-200 flex flex-col justify-between cursor-pointer transform hover:-translate-y-1"
                 >
-                  {/* Banner Image or Gradient Header */}
-                  <div className="relative h-24 sm:h-28 w-full bg-gradient-to-r from-violet-950/60 via-purple-900/40 to-[#1b1c29] overflow-hidden">
+                  {/* Banner Image or Gradient Header (Layered Behind) */}
+                  <div className="relative h-24 sm:h-28 w-full bg-gradient-to-r from-violet-950/60 via-purple-900/40 to-[#1b1c29] overflow-hidden z-0">
                     {srv.bannerUrl ? (
                       <img
                         src={srv.bannerUrl}
                         alt="Server banner"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 pointer-events-none"
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center opacity-25">
@@ -235,7 +235,7 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({
                     )}
 
                     {/* Owner / Joined Badge */}
-                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
                       {isOwner ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/90 text-zinc-950 flex items-center gap-1 shadow-sm backdrop-blur-xs">
                           <Crown className="w-3 h-3" />
@@ -250,11 +250,11 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({
                     </div>
                   </div>
 
-                  {/* Icon & Info Body */}
-                  <div className="px-4 pb-4 pt-0 flex-1 flex flex-col">
-                    {/* Floating Avatar Icon */}
-                    <div className="-mt-8 mb-2.5 flex items-end justify-between">
-                      <div className="w-14 h-14 rounded-xl bg-[#1d1f2b] border-2 border-[#2c2f40] group-hover:border-violet-500 flex items-center justify-center overflow-hidden shadow-md shrink-0 transition-colors">
+                  {/* Icon & Info Body (Layered in Front) */}
+                  <div className="px-4 pb-4 pt-0 flex-1 flex flex-col relative z-10">
+                    {/* Floating Avatar Icon In Front */}
+                    <div className="-mt-8 mb-2.5 flex items-end justify-between relative z-20">
+                      <div className="w-14 h-14 rounded-xl bg-[#1d1f2b] border-2 border-[#2c2f40] ring-4 ring-[#171822] group-hover:border-violet-500 flex items-center justify-center overflow-hidden shadow-2xl shrink-0 transition-colors relative z-30">
                         {srv.iconUrl ? (
                           <img src={srv.iconUrl} alt="Icon" className="w-full h-full object-cover" />
                         ) : (
@@ -343,16 +343,16 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({
             className="w-full max-w-md bg-[#161720] border border-[#272939] rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Banner */}
-            <div className="relative h-32 w-full bg-gradient-to-r from-violet-950 to-indigo-950 overflow-hidden">
+            {/* Modal Banner (Layered Behind) */}
+            <div className="relative h-32 w-full bg-gradient-to-r from-violet-950 to-indigo-950 overflow-hidden z-0">
               {selectedPreviewServer.bannerUrl && (
-                <img src={selectedPreviewServer.bannerUrl} alt="Banner" className="w-full h-full object-cover" />
+                <img src={selectedPreviewServer.bannerUrl} alt="Banner" className="w-full h-full object-cover pointer-events-none" />
               )}
             </div>
 
-            <div className="p-5 -mt-8 flex flex-col gap-3">
-              <div className="flex items-end justify-between">
-                <div className="w-16 h-16 rounded-xl bg-[#1d1f2b] border-2 border-[#33364a] flex items-center justify-center overflow-hidden shadow-lg">
+            <div className="p-5 -mt-8 flex flex-col gap-3 relative z-10">
+              <div className="flex items-end justify-between relative z-20">
+                <div className="w-16 h-16 rounded-xl bg-[#1d1f2b] border-2 border-[#33364a] ring-4 ring-[#161720] flex items-center justify-center overflow-hidden shadow-2xl relative z-30">
                   {selectedPreviewServer.iconUrl ? (
                     <img src={selectedPreviewServer.iconUrl} alt="Icon" className="w-full h-full object-cover" />
                   ) : (

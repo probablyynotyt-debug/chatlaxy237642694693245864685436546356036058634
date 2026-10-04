@@ -15,6 +15,7 @@ import { ProfileData } from './types/bio';
 import { RankId } from './types/ranks';
 import { addAuditLog } from './utils/auditLogger';
 import { signup, login, logout, getCurrentUser, saveUser } from './services/apiService';
+import { socketService } from './services/socketService';
 
 type ScreenStep = 'auth' | 'profile_setup' | 'chat' | 'admin';
 type AuthMode = 'login' | 'signup';
@@ -57,6 +58,24 @@ export default function App() {
     };
 
     restoreSession();
+  }, []);
+
+  // Listen for live rank & profile updates for current user
+  useEffect(() => {
+    const unsub = socketService.onUserUpdated((updatedUser) => {
+      if (!updatedUser?.username) return;
+      setCurrentUserProfile((prev) => {
+        if (!prev) return null;
+        if (prev.username.toLowerCase().trim() === updatedUser.username.toLowerCase().trim()) {
+          return {
+            ...prev,
+            ...updatedUser,
+          };
+        }
+        return prev;
+      });
+    });
+    return () => unsub();
   }, []);
 
   // Transition from signup to profile setup: Immediately saves new user to backend

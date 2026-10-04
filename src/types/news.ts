@@ -17,7 +17,7 @@ export interface NewsPost {
   authorRank?: string | null;
   content: string;
   mediaUrl?: string | null;
-  mediaType?: 'image' | 'video' | 'gif' | null;
+  mediaType?: 'image' | 'video' | 'gif' | 'audio' | null;
   timestamp: number;
   reactions: {
     like: string[]; // usernames

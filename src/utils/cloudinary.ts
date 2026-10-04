@@ -209,16 +209,17 @@ export async function uploadAudioToCloudinary(
 }
 
 /**
- * Uploads media (image, gif, or video) to Cloudinary and returns { url, type }.
+ * Uploads media (image, gif, video, or audio) to Cloudinary and returns { url, type }.
  */
 export async function uploadNewsMediaToCloudinary(
   file: File
-): Promise<{ url: string; type: 'image' | 'video' | 'gif' }> {
-  const isVideo = file.type.startsWith('video/');
+): Promise<{ url: string; type: 'image' | 'video' | 'gif' | 'audio' }> {
+  const isAudio = file.type.startsWith('audio/') || file.name.toLowerCase().match(/\.(mp3|wav|ogg|webm|m4a|aac)$/i);
+  const isVideo = file.type.startsWith('video/') && !isAudio;
   const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
-  const mediaType: 'image' | 'video' | 'gif' = isVideo ? 'video' : isGif ? 'gif' : 'image';
+  const mediaType: 'image' | 'video' | 'gif' | 'audio' = isAudio ? 'audio' : isVideo ? 'video' : isGif ? 'gif' : 'image';
 
-  const endpoint = isVideo ? AUDIO_UPLOAD_URL : UPLOAD_URL;
+  const endpoint = (isVideo || isAudio) ? AUDIO_UPLOAD_URL : UPLOAD_URL;
   const formData = new FormData();
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('file', file);

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, AlertCircle, Loader2, Sparkles, UserPlus } from 'lucide-react';
-import { login, signup } from '../services/apiService';
+import { Eye, EyeOff, AlertCircle, Loader2, UserPlus } from 'lucide-react';
+import { login } from '../services/apiService';
 import { ProfileData } from '../types/bio';
 
 interface LoginFormProps {
@@ -18,7 +18,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({
   const [errors, setErrors] = useState<{ identifier?: string; password?: string }>({});
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isQuickRegistering, setIsQuickRegistering] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,33 +65,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     }
   };
 
-  // Quick Guest / Demo Login for effortless preview testing
-  const handleQuickDemo = async () => {
-    setIsQuickRegistering(true);
-    setGeneralError(null);
-    try {
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-      const demoUsername = `Explorer_${randomSuffix}`;
-      const demoPassword = `chat_${randomSuffix}!`;
-
-      const user = await signup(demoUsername, demoPassword, {
-        gender: 'Not specified',
-        age: '18-24',
-        rank: 'VIP',
-        bioSegments: [{ id: 'b1', text: 'Just landed on Chatlaxy! ✨' }],
-      });
-
-      if (user) {
-        onLoginSuccess(user);
-      }
-    } catch (err: any) {
-      // If demo fails, fallback to standard signup
-      onSwitchToSignup();
-    } finally {
-      setIsQuickRegistering(false);
-    }
-  };
-
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 w-full" noValidate>
       {/* General live error notice with helpful resolution */}
@@ -129,7 +101,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
           }}
           placeholder="Enter your username"
           autoComplete="username"
-          disabled={isLoading || isQuickRegistering}
+          disabled={isLoading}
           className={`w-full px-3.5 py-2.5 text-sm bg-[#16171a] border rounded-md text-neutral-100 placeholder-neutral-500 outline-none transition-colors ${
             errors.identifier
               ? 'border-red-500/80 focus:border-red-400'
@@ -162,7 +134,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
             }}
             placeholder="Enter your password"
             autoComplete="current-password"
-            disabled={isLoading || isQuickRegistering}
+            disabled={isLoading}
             className={`w-full pl-3.5 pr-10 py-2.5 text-sm bg-[#16171a] border rounded-md text-neutral-100 placeholder-neutral-500 outline-none transition-colors ${
               errors.password
                 ? 'border-red-500/80 focus:border-red-400'
@@ -188,7 +160,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
       {/* Submit Login Button */}
       <button
         type="submit"
-        disabled={isLoading || isQuickRegistering}
+        disabled={isLoading}
         className="w-full mt-2 py-2.5 px-4 bg-zinc-200 hover:bg-white disabled:opacity-50 text-zinc-950 font-medium text-sm rounded-md transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:ring-offset-2 focus:ring-offset-[#1a1b20] cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2"
       >
         {isLoading ? (
@@ -198,26 +170,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({
           </>
         ) : (
           <span>Log In</span>
-        )}
-      </button>
-
-      {/* Quick 1-Click Guest Option */}
-      <button
-        type="button"
-        onClick={handleQuickDemo}
-        disabled={isLoading || isQuickRegistering}
-        className="w-full py-2 px-3 bg-[#20222a] hover:bg-[#282b35] text-neutral-300 hover:text-white border border-[#303340] rounded-md text-xs font-medium transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-      >
-        {isQuickRegistering ? (
-          <>
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-400" />
-            <span>Creating guest session...</span>
-          </>
-        ) : (
-          <>
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>Quick Guest Login (Instant)</span>
-          </>
         )}
       </button>
 

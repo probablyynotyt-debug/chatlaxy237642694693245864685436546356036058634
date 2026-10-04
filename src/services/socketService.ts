@@ -2,6 +2,7 @@ import { WS_BASE_URL, getAuthToken } from '../config/apiConfig';
 import { ChatMessage } from '../types/chat';
 import { NewsPost } from '../types/news';
 import { AppNotification } from '../types/notifications';
+import { ProfileData } from '../types/bio';
 
 type PresenceListener = (onlineUsernames: string[]) => void;
 type MessageListener = (message: ChatMessage) => void;
@@ -9,6 +10,7 @@ type MessageDeleteListener = (data: { id: string; serverId?: string | null; chan
 type MessagesClearListener = (data: { serverId?: string | null; channelId?: string | null }) => void;
 type NewsListener = (event: { type: string; post?: NewsPost; id?: string }) => void;
 type NotificationListener = (notification: AppNotification) => void;
+type UserUpdateListener = (user: ProfileData) => void;
 
 class SocketService {
   private ws: WebSocket | null = null;
@@ -24,6 +26,7 @@ class SocketService {
   private clearListeners = new Set<MessagesClearListener>();
   private newsListeners = new Set<NewsListener>();
   private notifListeners = new Set<NotificationListener>();
+  private userUpdateListeners = new Set<UserUpdateListener>();
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -116,6 +119,8 @@ class SocketService {
       this.newsListeners.forEach((fn) => fn(data));
     } else if (data.type === 'notification') {
       this.notifListeners.forEach((fn) => fn(data.notification));
+    } else if (data.type === 'user_updated' && data.user) {
+      this.userUpdateListeners.forEach((fn) => fn(data.user));
     }
   }
 
@@ -147,6 +152,11 @@ class SocketService {
   onNotification(fn: NotificationListener): () => void {
     this.notifListeners.add(fn);
     return () => this.notifListeners.delete(fn);
+  }
+
+  onUserUpdated(fn: UserUpdateListener): () => void {
+    this.userUpdateListeners.add(fn);
+    return () => this.userUpdateListeners.delete(fn);
   }
 }
 
