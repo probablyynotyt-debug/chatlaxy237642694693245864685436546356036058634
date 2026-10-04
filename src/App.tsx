@@ -96,12 +96,9 @@ export default function App() {
       if (user) {
         setCurrentUserProfile(user);
         setScreenStep('profile_setup');
-      } else {
-        alert('Signup failed. Username might already be taken.');
       }
     } catch (err: any) {
       console.error('Failed to register user:', err);
-      alert(err?.message || 'Signup failed. Please try again.');
     } finally {
       setIsAuthChecking(false);
     }

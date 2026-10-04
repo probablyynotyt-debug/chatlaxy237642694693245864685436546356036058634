@@ -224,8 +224,32 @@ export async function execute(sql, params = []) {
   } else {
     sqliteDb.run(sql);
   }
-  scheduleSqliteSave();
+  // Instantly persist database on every write
+  persistDbNow();
   return { success: true };
+}
+
+// Helper to ensure SQLite table has all needed columns
+function ensureSqliteColumns(tableName, expectedCols) {
+  if (isPostgres || !sqliteDb) return;
+  try {
+    const res = sqliteDb.exec(`PRAGMA table_info(${tableName});`);
+    if (!res || res.length === 0) return;
+    const existing = new Set(res[0].values.map((row) => row[1].toLowerCase()));
+
+    for (const [colName, colType] of Object.entries(expectedCols)) {
+      if (!existing.has(colName.toLowerCase())) {
+        try {
+          sqliteDb.run(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${colType};`);
+          console.log(`✨ Added missing column ${colName} (${colType}) to ${tableName}`);
+        } catch (colErr) {
+          console.warn(`Could not add column ${colName} to ${tableName}:`, colErr.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`Pragma check error on ${tableName}:`, err.message);
+  }
 }
 
 export async function initDatabase() {
@@ -373,6 +397,40 @@ export async function initDatabase() {
         value TEXT NOT NULL
       );
 
+      -- Postgres Column Migrations (in case table was created with earlier schema)
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS displayName TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS globalTags TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS usernameStyle TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS chatTextStyle TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS customRankName TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatarFrame TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS profileBorder TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS profileEffect TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS profileMusic TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS chatBackground TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS likesCount BIGINT DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS likedBy TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS dailyMessagesDate TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS dailyMessagesCount BIGINT DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS claimedDailyMilestones TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS lastDailyClaim BIGINT DEFAULT 0;
+
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS serverId TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS channelId TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderAvatar TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderAvatarFrame TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderRank TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderCustomRankName TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderUsernameStyle TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS isSystemBot INT DEFAULT 0;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS replyTo TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments TEXT;
+
+      ALTER TABLE servers ADD COLUMN IF NOT EXISTS iconUrl TEXT;
+      ALTER TABLE servers ADD COLUMN IF NOT EXISTS bannerUrl TEXT;
+      ALTER TABLE servers ADD COLUMN IF NOT EXISTS description TEXT;
+
       CREATE INDEX IF NOT EXISTS idx_messages_server_chan ON messages(serverId, channelId, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users(LOWER(username));
       CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
@@ -382,7 +440,7 @@ export async function initDatabase() {
     return;
   }
 
-  // SQLite Schema
+  // SQLite Schema Creation
   await execute(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -543,6 +601,47 @@ export async function initDatabase() {
     );
   `);
 
+  // Ensure all columns exist in existing SQLite tables
+  ensureSqliteColumns('users', {
+    displayName: 'TEXT',
+    globalTags: 'TEXT',
+    usernameStyle: 'TEXT',
+    chatTextStyle: 'TEXT',
+    customRankName: 'TEXT',
+    avatarFrame: 'TEXT',
+    profileBorder: 'TEXT',
+    profileEffect: 'TEXT',
+    profileMusic: 'TEXT',
+    chatBackground: 'TEXT',
+    effects: 'TEXT',
+    likesCount: 'INTEGER DEFAULT 0',
+    likedBy: 'TEXT',
+    wallet: 'TEXT',
+    dailyMessagesDate: 'TEXT',
+    dailyMessagesCount: 'INTEGER DEFAULT 0',
+    claimedDailyMilestones: 'TEXT',
+    lastDailyClaim: 'INTEGER DEFAULT 0',
+  });
+
+  ensureSqliteColumns('messages', {
+    serverId: 'TEXT',
+    channelId: 'TEXT',
+    senderAvatar: 'TEXT',
+    senderAvatarFrame: 'TEXT',
+    senderRank: 'TEXT',
+    senderCustomRankName: 'TEXT',
+    senderUsernameStyle: 'TEXT',
+    isSystemBot: 'INTEGER DEFAULT 0',
+    replyTo: 'TEXT',
+    attachments: 'TEXT',
+  });
+
+  ensureSqliteColumns('servers', {
+    iconUrl: 'TEXT',
+    bannerUrl: 'TEXT',
+    description: 'TEXT',
+  });
+
   persistDbNow();
-  console.log('✅ SQLite schema initialized successfully.');
+  console.log('✅ SQLite schema and column migrations completed successfully.');
 }

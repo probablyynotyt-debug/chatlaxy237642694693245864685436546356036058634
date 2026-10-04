@@ -506,11 +506,19 @@ app.get('/api/messages', async (req, res) => {
     let sql = 'SELECT * FROM messages WHERE ';
     const params = [];
 
-    if (serverId && channelId) {
-      sql += 'serverId = ? AND channelId = ? ';
-      params.push(serverId, channelId);
+    const hasServer = serverId && serverId !== 'null' && serverId !== 'undefined' && serverId !== '';
+    const hasChannel = channelId && channelId !== 'null' && channelId !== 'undefined' && channelId !== '';
+
+    if (hasServer) {
+      if (hasChannel) {
+        sql += 'serverId = ? AND channelId = ? ';
+        params.push(serverId, channelId);
+      } else {
+        sql += 'serverId = ? ';
+        params.push(serverId);
+      }
     } else {
-      sql += '(serverId IS NULL OR serverId = "") AND (channelId IS NULL OR channelId = "") ';
+      sql += '(serverId IS NULL OR serverId = "" OR serverId = "null" OR serverId = "undefined") ';
     }
 
     if (before) {
@@ -538,8 +546,8 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
 
     const id = msg.id || `msg-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     const timestamp = msg.timestamp || Date.now();
-    const serverId = msg.serverId || null;
-    const channelId = msg.channelId || null;
+    const serverId = (msg.serverId && msg.serverId !== 'null' && msg.serverId !== 'undefined') ? msg.serverId : null;
+    const channelId = (msg.channelId && msg.channelId !== 'null' && msg.channelId !== 'undefined') ? msg.channelId : null;
 
     await execute(
       `INSERT INTO messages (
@@ -717,28 +725,145 @@ app.get('/api/rewards/leaderboard', async (req, res) => {
 // 5. SERVERS, CHANNELS, ROLES & MEMBERS
 // ----------------------------------------------------
 
-app.get('/api/servers', async (req, res) => {
+app.get('/api/servers', optionalAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM servers ORDER BY createdAt ASC');
-    return res.json(rows);
+    const servers = await query('SELECT * FROM servers ORDER BY createdAt ASC');
+    const onlineUsernames = new Set(
+      Array.from(clients.values()).map((c) => (c.username || '').toLowerCase()).filter(Boolean)
+    );
+
+    const enriched = await Promise.all(
+      servers.map(async (srv) => {
+        const members = await query('SELECT username, roles FROM members WHERE serverId = ?', [srv.id]);
+        const channels = await query('SELECT id, name, position FROM channels WHERE serverId = ? ORDER BY position ASC, name ASC', [srv.id]);
+        const roles = await query('SELECT id, name, colour, position, permissions FROM roles WHERE serverId = ? ORDER BY position ASC', [srv.id]);
+
+        const memberUsernames = members.map((m) => (m.username || '').toLowerCase());
+        const activeCount = memberUsernames.filter((u) => onlineUsernames.has(u)).length;
+        const isJoined = req.username ? memberUsernames.includes(req.username.toLowerCase()) : false;
+
+        return {
+          ...srv,
+          memberCount: members.length,
+          activeCount: Math.max(activeCount, srv.owner && onlineUsernames.has(srv.owner.toLowerCase()) ? 1 : 0),
+          channelCount: channels.length,
+          channels,
+          roles: roles.map((r) => ({
+            ...r,
+            permissions: r.permissions ? JSON.parse(r.permissions) : [],
+          })),
+          isJoined,
+        };
+      })
+    );
+
+    return res.json(enriched);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/servers/:id', async (req, res) => {
+app.get('/api/servers/:id', optionalAuth, async (req, res) => {
   try {
     const serverRow = await getOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
     if (!serverRow) return res.status(404).json({ error: 'Server not found' });
     const channels = await query('SELECT * FROM channels WHERE serverId = ? ORDER BY position ASC, name ASC', [req.params.id]);
     const roles = await query('SELECT * FROM roles WHERE serverId = ? ORDER BY position ASC', [req.params.id]);
     const members = await query('SELECT * FROM members WHERE serverId = ?', [req.params.id]);
+    const onlineUsernames = new Set(
+      Array.from(clients.values()).map((c) => (c.username || '').toLowerCase()).filter(Boolean)
+    );
+
+    const memberUsernames = members.map((m) => (m.username || '').toLowerCase());
+    const activeCount = memberUsernames.filter((u) => onlineUsernames.has(u)).length;
+
     return res.json({
       ...serverRow,
+      memberCount: members.length,
+      activeCount: Math.max(activeCount, serverRow.owner && onlineUsernames.has(serverRow.owner.toLowerCase()) ? 1 : 0),
+      channelCount: channels.length,
       channels,
       roles: roles.map(r => ({ ...r, permissions: r.permissions ? JSON.parse(r.permissions) : [] })),
       members: members.map(m => ({ ...m, roles: m.roles ? JSON.parse(m.roles) : [] })),
     });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/servers/:id', verifyAuth, async (req, res) => {
+  try {
+    const serverId = req.params.id;
+    const serverRow = await getOne('SELECT * FROM servers WHERE id = ?', [serverId]);
+    if (!serverRow) return res.status(404).json({ error: 'Server not found' });
+
+    // Verify owner or admin
+    if (serverRow.owner.toLowerCase() !== req.username.toLowerCase()) {
+      return res.status(403).json({ error: 'Only server owner can edit server settings' });
+    }
+
+    const { name, iconUrl, bannerUrl, description } = req.body;
+    await execute(
+      `UPDATE servers SET
+        name = COALESCE(?, name),
+        iconUrl = ?,
+        bannerUrl = ?,
+        description = COALESCE(?, description)
+      WHERE id = ?`,
+      [
+        name ?? null,
+        iconUrl !== undefined ? iconUrl : serverRow.iconUrl,
+        bannerUrl !== undefined ? bannerUrl : serverRow.bannerUrl,
+        description ?? null,
+        serverId,
+      ]
+    );
+
+    const updated = await getOne('SELECT * FROM servers WHERE id = ?', [serverId]);
+    return res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/servers/:id', verifyAuth, async (req, res) => {
+  try {
+    const serverId = req.params.id;
+    const serverRow = await getOne('SELECT * FROM servers WHERE id = ?', [serverId]);
+    if (!serverRow) return res.status(404).json({ error: 'Server not found' });
+
+    if (serverRow.owner.toLowerCase() !== req.username.toLowerCase()) {
+      return res.status(403).json({ error: 'Only the server owner can delete this server' });
+    }
+
+    await execute('DELETE FROM servers WHERE id = ?', [serverId]);
+    await execute('DELETE FROM channels WHERE serverId = ?', [serverId]);
+    await execute('DELETE FROM roles WHERE serverId = ?', [serverId]);
+    await execute('DELETE FROM members WHERE serverId = ?', [serverId]);
+    await execute('DELETE FROM messages WHERE serverId = ?', [serverId]);
+
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/servers/:id/channels/:channelId', verifyAuth, async (req, res) => {
+  try {
+    const { id: serverId, channelId } = req.params;
+    await execute('DELETE FROM channels WHERE serverId = ? AND id = ?', [serverId, channelId]);
+    await execute('DELETE FROM messages WHERE serverId = ? AND channelId = ?', [serverId, channelId]);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/servers/:id/members/:username', verifyAuth, async (req, res) => {
+  try {
+    const { id: serverId, username: targetUser } = req.params;
+    await execute('DELETE FROM members WHERE serverId = ? AND LOWER(username) = ?', [serverId, targetUser.toLowerCase()]);
+    return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

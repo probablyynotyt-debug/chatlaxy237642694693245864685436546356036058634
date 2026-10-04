@@ -14,6 +14,13 @@ export interface ServerData {
   bannerUrl?: string | null;
   description?: string;
   createdAt?: number;
+  memberCount?: number;
+  activeCount?: number;
+  channelCount?: number;
+  channels?: ServerChannel[];
+  roles?: ServerRole[];
+  members?: ServerMember[];
+  isJoined?: boolean;
 }
 
 export interface ServerChannel {
@@ -528,15 +535,36 @@ export async function getServer(serverId: string): Promise<ServerData | null> {
 
 export async function createServer(
   name: string,
-  owner: string,
-  iconUrl?: string | null
+  owner?: string,
+  iconUrl?: string | null,
+  bannerUrl?: string | null,
+  description?: string
 ): Promise<ServerData | null> {
   const res = await apiFetch('/api/servers', {
     method: 'POST',
-    body: JSON.stringify({ name, iconUrl }),
+    body: JSON.stringify({ name, iconUrl, bannerUrl, description }),
   });
   if (!res.ok) return null;
   return res.json();
+}
+
+export async function updateServer(
+  serverId: string,
+  data: Partial<ServerData>
+): Promise<ServerData | null> {
+  const res = await apiFetch(`/api/servers/${encodeURIComponent(serverId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function deleteServer(serverId: string): Promise<boolean> {
+  const res = await apiFetch(`/api/servers/${encodeURIComponent(serverId)}`, {
+    method: 'DELETE',
+  });
+  return res.ok;
 }
 
 export async function joinServer(serverId: string, username: string): Promise<boolean> {
@@ -557,6 +585,13 @@ export async function getServerMembers(serverId: string): Promise<ServerMember[]
   const res = await apiFetch(`/api/servers/${encodeURIComponent(serverId)}/members`);
   if (!res.ok) return [];
   return res.json();
+}
+
+export async function kickServerMember(serverId: string, username: string): Promise<boolean> {
+  const res = await apiFetch(`/api/servers/${encodeURIComponent(serverId)}/members/${encodeURIComponent(username)}`, {
+    method: 'DELETE',
+  });
+  return res.ok;
 }
 
 export async function updateMemberRoles(
@@ -584,6 +619,13 @@ export async function createChannel(serverId: string, name: string): Promise<Ser
   });
   if (!res.ok) return null;
   return res.json();
+}
+
+export async function deleteChannel(serverId: string, channelId: string): Promise<boolean> {
+  const res = await apiFetch(`/api/servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}`, {
+    method: 'DELETE',
+  });
+  return res.ok;
 }
 
 export async function getServerRoles(serverId: string): Promise<ServerRole[]> {
