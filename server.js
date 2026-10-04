@@ -514,29 +514,14 @@ function formatMessage(row) {
 
 app.get('/api/messages', async (req, res) => {
   try {
-    const { serverId, channelId, before } = req.query;
+    const { before } = req.query;
     const limitNum = Math.min(Number(req.query.limit) || 50, 100);
 
-    let sql = 'SELECT * FROM messages WHERE ';
+    let sql = 'SELECT * FROM messages ';
     const params = [];
 
-    const hasServer = serverId && serverId !== 'null' && serverId !== 'undefined' && serverId !== '';
-    const hasChannel = channelId && channelId !== 'null' && channelId !== 'undefined' && channelId !== '';
-
-    if (hasServer) {
-      if (hasChannel) {
-        sql += 'serverId = ? AND channelId = ? ';
-        params.push(serverId, channelId);
-      } else {
-        sql += 'serverId = ? ';
-        params.push(serverId);
-      }
-    } else {
-      sql += '(serverId IS NULL OR serverId = "" OR serverId = "null" OR serverId = "undefined") ';
-    }
-
     if (before) {
-      sql += 'AND timestamp < ? ';
+      sql += 'WHERE timestamp < ? ';
       params.push(Number(before));
     }
 
@@ -547,6 +532,7 @@ app.get('/api/messages', async (req, res) => {
     const messages = rows.map(formatMessage).sort((a, b) => a.timestamp - b.timestamp);
     return res.json(messages);
   } catch (err) {
+    console.error('Fetch messages error in server.js:', err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -560,19 +546,15 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
 
     const id = msg.id || `msg-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     const timestamp = msg.timestamp || Date.now();
-    const serverId = (msg.serverId && msg.serverId !== 'null' && msg.serverId !== 'undefined') ? msg.serverId : null;
-    const channelId = (msg.channelId && msg.channelId !== 'null' && msg.channelId !== 'undefined') ? msg.channelId : null;
 
     await execute(
       `INSERT INTO messages (
-        id, serverId, channelId, senderName, content, timestamp,
+        id, senderName, content, timestamp,
         senderAvatar, senderAvatarFrame, senderRank, senderCustomRankName,
         senderUsernameStyle, isSystemBot, replyTo, attachments, mediaUrl, mediaType, gamblePayload, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
-        serverId,
-        channelId,
         msg.senderName,
         msg.content || '',
         timestamp,
@@ -593,8 +575,6 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
 
     const formatted = formatMessage({
       id,
-      serverId,
-      channelId,
       senderName: msg.senderName,
       content: msg.content || '',
       timestamp,
@@ -626,14 +606,11 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
 app.delete('/api/messages/:id', verifyAuth, async (req, res) => {
   try {
     const id = req.params.id;
-    const msg = await getOne('SELECT serverId, channelId FROM messages WHERE id = ?', [id]);
     await execute('DELETE FROM messages WHERE id = ?', [id]);
 
     broadcast({
       type: 'message_deleted',
       id,
-      serverId: msg?.serverId || null,
-      channelId: msg?.channelId || null,
     });
 
     return res.json({ success: true });
@@ -644,17 +621,10 @@ app.delete('/api/messages/:id', verifyAuth, async (req, res) => {
 
 app.delete('/api/messages', verifyAuth, async (req, res) => {
   try {
-    const { serverId, channelId } = req.query;
-    if (serverId && channelId) {
-      await execute('DELETE FROM messages WHERE serverId = ? AND channelId = ?', [serverId, channelId]);
-    } else {
-      await execute('DELETE FROM messages WHERE (serverId IS NULL OR serverId = "") AND (channelId IS NULL OR channelId = "")');
-    }
+    await execute('DELETE FROM messages');
 
     broadcast({
       type: 'messages_cleared',
-      serverId: serverId || null,
-      channelId: channelId || null,
     });
 
     return res.json({ success: true });
@@ -685,7 +655,7 @@ app.post('/api/rewards/message-sent', verifyAuth, async (req, res) => {
     } else {
       currentCount = 1;
       await execute(
-        'UPDATE users SET dailyMessagesCount = 1, dailyMessagesDate = ?, claimedDailyMilestones = "[]", updatedAt = ? WHERE id = ?',
+        "UPDATE users SET dailyMessagesCount = 1, dailyMessagesDate = ?, claimedDailyMilestones = '[]', updatedAt = ? WHERE id = ?",
         [todayKey, Date.now(), userRow.id]
       );
     }

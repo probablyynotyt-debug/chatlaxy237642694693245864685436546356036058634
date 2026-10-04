@@ -1,33 +1,30 @@
 import React from 'react';
-import { User, Crown, Server as ServerIcon } from 'lucide-react';
 import { ProfileData } from '../types/bio';
 import { SYSTEM_BOT } from '../constants/systemBot';
 import { getRankConfig } from '../constants/ranks';
 import { RankId } from '../types/ranks';
 import { UserAvatar } from './UserAvatar';
 import { getTextStyleCSS } from '../utils/textStylePresets';
-import { ServerData, ServerMember } from '../services/apiService';
 
 interface OnlinePlayersPanelProps {
   currentUser: ProfileData;
   allUsers?: Record<string, ProfileData>;
-  server?: ServerData | null;
-  serverMembers?: ServerMember[];
   onOpenProfile: (userId: string) => void;
 }
 
 export const OnlinePlayersPanel: React.FC<OnlinePlayersPanelProps> = ({
   currentUser,
   allUsers = {},
-  server,
-  serverMembers = [],
   onOpenProfile,
 }) => {
-  const isInsideServer = Boolean(server);
   const myUsername = (currentUser?.username || '').toLowerCase().trim();
 
-  // If inside a server, determine membership and server-specific roles
-  let rawOnlineUsers: Array<{
+  // Global Main Chat Roster
+  const otherUsersList = Object.values(allUsers || {}).filter(
+    (u) => u && u.username && u.username.toLowerCase().trim() !== myUsername
+  );
+
+  const rawOnlineUsers: Array<{
     id: string;
     name: string;
     avatar: string | null;
@@ -37,114 +34,55 @@ export const OnlinePlayersPanel: React.FC<OnlinePlayersPanelProps> = ({
     rank: RankId;
     customRankName: string | null;
     usernameStyle: any;
-  }> = [];
-
-  if (isInsideServer && server) {
-    const isOwner = server.owner.toLowerCase().trim() === myUsername;
-    const myServerMember = serverMembers.find((m) => m.username.toLowerCase().trim() === myUsername);
-    const myServerRole = myServerMember?.roles?.[0] || null;
-
-    // Current user in server
-    if (currentUser?.username) {
-      rawOnlineUsers.push({
-        id: currentUser.username,
-        name: currentUser.username,
-        avatar: currentUser.profilePicture || allUsers[myUsername]?.profilePicture || null,
-        avatarFrame: currentUser.avatarFrame || currentUser.effects?.pfpBorder || allUsers[myUsername]?.avatarFrame || null,
-        isSystemBot: false,
-        mood: currentUser.mood?.trim() || '',
-        rank: isOwner ? 'DEV' : (myServerRole ? 'VIP' : 'VIP'),
-        customRankName: isOwner ? 'DEVELOPER (Owner)' : myServerRole,
-        usernameStyle: currentUser.usernameStyle || allUsers[myUsername]?.usernameStyle || null,
-      });
-    }
-
-    // Other members of this server
-    const otherMemberNames = new Set(
-      serverMembers
-        .map((m) => m.username.toLowerCase().trim())
-        .filter((name) => name !== myUsername)
-    );
-
-    // Also include owner if not current user
-    if (server.owner.toLowerCase().trim() !== myUsername) {
-      otherMemberNames.add(server.owner.toLowerCase().trim());
-    }
-
-    otherMemberNames.forEach((uName) => {
-      const uProfile = allUsers[uName];
-      const memObj = serverMembers.find((m) => m.username.toLowerCase().trim() === uName);
-      const isMemOwner = server.owner.toLowerCase().trim() === uName;
-      const memRole = memObj?.roles?.[0] || null;
-
-      rawOnlineUsers.push({
-        id: uProfile?.username || uName,
-        name: uProfile?.username || uName,
-        avatar: uProfile?.profilePicture || null,
-        avatarFrame: uProfile?.avatarFrame || uProfile?.effects?.pfpBorder || null,
-        isSystemBot: false,
-        mood: uProfile?.mood?.trim() || '',
-        rank: isMemOwner ? 'DEV' : 'VIP',
-        customRankName: isMemOwner ? 'DEVELOPER (Owner)' : memRole,
-        usernameStyle: uProfile?.usernameStyle || null,
-      });
-    });
-  } else {
-    // Global Main Chat Roster
-    const otherUsersList = Object.values(allUsers || {}).filter(
-      (u) => u && u.username && u.username.toLowerCase().trim() !== myUsername
-    );
-
-    rawOnlineUsers = [
-      {
-        id: 'system',
-        name: SYSTEM_BOT.name,
-        avatar: SYSTEM_BOT.avatar,
-        avatarFrame: null,
-        isSystemBot: true,
-        mood: '',
-        rank: SYSTEM_BOT.rank as RankId,
-        customRankName: null,
-        usernameStyle: null,
-      },
-      ...(currentUser?.username
-        ? [
-            {
-              id: currentUser.username,
-              name: currentUser.username,
-              avatar:
-                currentUser.profilePicture ||
-                allUsers[myUsername]?.profilePicture ||
-                null,
-              avatarFrame:
-                currentUser.avatarFrame ||
-                currentUser.effects?.pfpBorder ||
-                allUsers[myUsername]?.avatarFrame ||
-                null,
-              isSystemBot: false,
-              mood: currentUser.mood?.trim() || '',
-              rank: (currentUser.rank || (currentUser.username.toLowerCase() === 'null' ? 'DEV' : 'VIP')) as RankId,
-              customRankName: currentUser.customRankName || null,
-              usernameStyle:
-                currentUser.usernameStyle ||
-                allUsers[myUsername]?.usernameStyle ||
-                null,
-            },
-          ]
-        : []),
-      ...otherUsersList.map((u) => ({
-        id: u.username,
-        name: u.username,
-        avatar: u.profilePicture || null,
-        avatarFrame: u.avatarFrame || u.effects?.pfpBorder || null,
-        isSystemBot: false,
-        mood: u.mood?.trim() || '',
-        rank: (u.rank || (u.username.toLowerCase() === 'null' ? 'DEV' : 'VIP')) as RankId,
-        customRankName: u.customRankName || null,
-        usernameStyle: u.usernameStyle || null,
-      })),
-    ];
-  }
+  }> = [
+    {
+      id: 'system',
+      name: SYSTEM_BOT.name,
+      avatar: SYSTEM_BOT.avatar,
+      avatarFrame: null,
+      isSystemBot: true,
+      mood: '',
+      rank: SYSTEM_BOT.rank as RankId,
+      customRankName: null,
+      usernameStyle: null,
+    },
+    ...(currentUser?.username
+      ? [
+          {
+            id: currentUser.username,
+            name: currentUser.username,
+            avatar:
+              currentUser.profilePicture ||
+              allUsers[myUsername]?.profilePicture ||
+              null,
+            avatarFrame:
+              currentUser.avatarFrame ||
+              currentUser.effects?.pfpBorder ||
+              allUsers[myUsername]?.avatarFrame ||
+              null,
+            isSystemBot: false,
+            mood: currentUser.mood?.trim() || '',
+            rank: (currentUser.rank || (currentUser.username.toLowerCase() === 'null' ? 'DEV' : 'VIP')) as RankId,
+            customRankName: currentUser.customRankName || null,
+            usernameStyle:
+              currentUser.usernameStyle ||
+              allUsers[myUsername]?.usernameStyle ||
+              null,
+          },
+        ]
+      : []),
+    ...otherUsersList.map((u) => ({
+      id: u.username,
+      name: u.username,
+      avatar: u.profilePicture || null,
+      avatarFrame: u.avatarFrame || u.effects?.pfpBorder || null,
+      isSystemBot: false,
+      mood: u.mood?.trim() || '',
+      rank: (u.rank || (u.username.toLowerCase() === 'null' ? 'DEV' : 'VIP')) as RankId,
+      customRankName: u.customRankName || null,
+      usernameStyle: u.usernameStyle || null,
+    })),
+  ];
 
   // Sort by staff hierarchy (DEV -> FOUNDER -> ... -> MODERATOR -> BOT -> ELITE -> SUPER-VIP -> VIP)
   const onlineUsers = [...rawOnlineUsers].sort((a, b) => {
@@ -161,15 +99,9 @@ export const OnlinePlayersPanel: React.FC<OnlinePlayersPanelProps> = ({
       <div className="flex flex-col">
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-1.5 min-w-0">
-            {isInsideServer ? (
-              <span className="text-[11px] font-bold tracking-wider text-violet-300 uppercase truncate">
-                Server Members
-              </span>
-            ) : (
-              <span className="text-[11px] font-bold tracking-wider text-neutral-400 uppercase">
-                Online
-              </span>
-            )}
+            <span className="text-[11px] font-bold tracking-wider text-neutral-400 uppercase">
+              Online
+            </span>
           </div>
           <span className="text-[11px] text-neutral-500 font-mono">
             {onlineUsers.length}
