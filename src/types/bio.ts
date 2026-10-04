@@ -61,6 +61,7 @@ export interface TextStyleConfig {
 
 export interface ProfileData {
   username: string;
+  displayName?: string;
   password?: string;
   email?: string;
   profilePicture: string | null;

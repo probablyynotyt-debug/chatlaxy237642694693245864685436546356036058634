@@ -21,24 +21,22 @@ import { NewsPost, NewsReactionType } from '../types/news';
 import { handleChatCommand } from '../utils/commandHandler';
 import { isFounderOrAbove } from '../utils/permissions';
 import { addAuditLog } from '../utils/auditLogger';
-import { auth } from '../services/firebaseConfig';
-import { FirebaseTrackerModal } from './FirebaseTrackerModal';
 import {
   subscribeToMessages,
   loadOlderMessages,
-  sendMessageToFirestore,
-  deleteMessageFromFirestore,
-  clearAllMessagesInFirestore,
+  sendMessage,
+  deleteMessage,
+  clearAllMessages,
   subscribeToUsers,
-  saveUserToFirestore,
+  saveUser,
   recordMessageSentForDailyRewards,
   claimDailyReward,
   subscribeToNews,
-  createNewsPostInFirestore,
-  deleteNewsPostFromFirestore,
-  updateNewsPostInFirestore,
+  createNewsPost,
+  deleteNewsPost,
+  updateNewsPost,
   subscribeToUserNotifications,
-  deleteNotificationFromFirestore,
+  deleteNotification,
   clearAllNotificationsForUser,
   getServers,
   createServer,
@@ -114,14 +112,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const [newRoleColour, setNewRoleColour] = useState('#99aab5');
   const [isExploreOpen, setIsExploreOpen] = useState(false);
 
-  const [isTrackerOpen, setIsTrackerOpen] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
-
-  // Restrict Firebase Activity & Quota Dev Inspector strictly to null@gmail.com
-  const isInspectorAllowed =
-    currentUser?.email?.toLowerCase().trim() === 'null@gmail.com' ||
-    auth.currentUser?.email?.toLowerCase().trim() === 'null@gmail.com';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -238,7 +230,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // 2b. Automatically merge active chatters from incoming messages (0 Firestore reads)
+  // 2b. Automatically merge active chatters from incoming messages
   useEffect(() => {
     if (messages.length === 0) return;
     setAllUsers((prev) => {
@@ -267,7 +259,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     });
   }, [messages]);
 
-  // 3. Subscribe to Live Firestore News Announcements (Subscribed once, not destroyed on drawer open)
+  // 3. Subscribe to Live News Announcements (Subscribed once, not destroyed on drawer open)
   useEffect(() => {
     const lastRead = Number(localStorage.getItem('chatlaxy_last_read_news_time') || '0');
     const unsubscribe = subscribeToNews((posts) => {
@@ -334,7 +326,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   // Delete single notification
   const handleDeleteNotification = async (id: string) => {
     try {
-      await deleteNotificationFromFirestore(id);
+      await deleteNotification(id);
       setNotifications((prev) => prev.filter((n) => n.id !== id));
     } catch (err) {
       console.error('Error deleting notification:', err);
@@ -411,10 +403,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         // If clearChat is requested (/clear dev command)
         if (commandResult.clearChat) {
           setHiddenMessageIds(new Set());
-          await clearAllMessagesInFirestore(commandResult.publicMessage);
+          await clearAllMessages(commandResult.publicMessage);
         } else if (commandResult.publicMessage) {
-          // Send public message to live Firestore chat
-          await sendMessageToFirestore(commandResult.publicMessage);
+          // Send public message to chat
+          await sendMessage(commandResult.publicMessage);
         }
 
         // Show private feedback notice if present (e.g. /daily rewards, error notices)
@@ -429,7 +421,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       }
     }
 
-    // Atomic Daily message counting in Firestore (quota-efficient increment)
+    // Atomic Daily message counting in backend
     recordMessageSentForDailyRewards(currentUser.username).then(({ count, date }) => {
       onUpdateCurrentUser({
         ...currentUser,
@@ -467,11 +459,11 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     setInputText('');
     setReplyContext(null);
 
-    // Save to Live Firestore Realtime Database
+    // Save to backend database
     try {
-      await sendMessageToFirestore(newMessage, activeServer?.id || null, activeChannel?.id || null);
+      await sendMessage(newMessage, activeServer?.id || null, activeChannel?.id || null);
     } catch (err) {
-      console.error('Error sending message to Firestore:', err);
+      console.error('Error sending message:', err);
       // Fallback local state if offline
       setMessages((prev) => [...prev, newMessage]);
     }
@@ -502,7 +494,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     };
     onUpdateCurrentUser(updated);
 
-    // Atomic update in Firestore (1 targeted updateDoc)
+    // Atomic update in backend
     claimDailyReward(currentUser.username, milestoneCount, gold, rubies).then((fresh) => {
       if (fresh) onUpdateCurrentUser(fresh);
     }).catch((err) => {
@@ -522,7 +514,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     };
 
     onUpdateCurrentUser(updated);
-    await saveUserToFirestore(updated);
+    await saveUser(updated);
     addAuditLog(
       currentUser.username,
       'Equipped Avatar Frame',
@@ -565,7 +557,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       comments: [],
     };
 
-    await createNewsPostInFirestore(newPost);
+    await createNewsPost(newPost);
     addAuditLog(
       currentUser.username,
       'Published News Post',
@@ -578,7 +570,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   // Delete a news post
   const handleDeleteNewsPost = async (postId: string) => {
     if (!isFounderOrAbove(currentUser)) return;
-    await deleteNewsPostFromFirestore(postId);
+    await deleteNewsPost(postId);
     addAuditLog(
       currentUser.username,
       'Deleted News Post',
@@ -608,7 +600,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       },
     };
 
-    await updateNewsPostInFirestore(updatedPost);
+    await updateNewsPost(updatedPost);
   };
 
   // Add comment to a news post
@@ -630,7 +622,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       comments: [...(post.comments || []), newComment],
     };
 
-    await updateNewsPostInFirestore(updatedPost);
+    await updateNewsPost(updatedPost);
   };
 
   // Delete comment from a news post
@@ -644,7 +636,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       comments: (post.comments || []).filter((c) => c.id !== commentId),
     };
 
-    await updateNewsPostInFirestore(updatedPost);
+    await updateNewsPost(updatedPost);
   };
 
   // Handle reply button clicked on message menu
@@ -673,11 +665,11 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         'chat'
       );
     }
-    // Delete from Firestore
+    // Delete from backend
     try {
-      await deleteMessageFromFirestore(id);
+      await deleteMessage(id);
     } catch (err) {
-      console.error('Error deleting message from Firestore:', err);
+      console.error('Error deleting message:', err);
     }
     setMessages((prev) => prev.filter((m) => m.id !== id));
   };
@@ -690,9 +682,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     };
     onUpdateCurrentUser(updated);
     try {
-      await saveUserToFirestore(updated);
+      await saveUser(updated);
     } catch (err) {
-      console.warn('Failed to save profile decoration to Firestore:', err);
+      console.warn('Failed to save profile decoration:', err);
     }
   };
 
@@ -723,22 +715,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           <ChatlaxyLogo size="md" />
         </div>
 
-        {/* Top Right: Firebase Inspector + Bell Notifications Button + User's Profile Picture */}
+        {/* Top Right: Bell Notifications Button + User's Profile Picture */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Firebase Quota & Activity Inspector Button (Restricted to null@gmail.com) */}
-          {isInspectorAllowed && (
-            <button
-              type="button"
-              onClick={() => setIsTrackerOpen(true)}
-              title="Inspect Firebase Reads, Writes & Realtime Listeners"
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-[#1a1b22] hover:bg-[#232530] border border-amber-500/30 hover:border-amber-500/50 rounded text-[11px] font-mono text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="hidden sm:inline">Firebase Inspector</span>
-              <span className="sm:hidden">⚡ Inspector</span>
-            </button>
-          )}
-
           {/* Bell Notifications Button */}
           <button
             type="button"
@@ -838,7 +816,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               </div>
             ) : (
               <div className="flex flex-col w-full">
-                {/* Pagination: Load older messages from Firestore */}
+                {/* Pagination: Load older messages from backend */}
                 {hasMoreOlder && messages.length >= 30 && (
                   <div className="flex justify-center py-2.5">
                     <button
@@ -1230,14 +1208,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
             </button>
           </div>
         </div>
-      )}
-
-      {/* Firebase Activity & Quota Dev Inspector Modal (Restricted to null@gmail.com) */}
-      {isInspectorAllowed && (
-        <FirebaseTrackerModal
-          isOpen={isTrackerOpen}
-          onClose={() => setIsTrackerOpen(false)}
-        />
       )}
     </div>
   );

@@ -1,0 +1,41 @@
+services:
+  # 1. Chatlaxy Hosted Backend (Render Web Service)
+  - type: web
+    name: chatlaxy-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false # Set to your Neon PostgreSQL connection string: postgresql://...
+      - key: CLOUDINARY_CLOUD_NAME
+        value: oc8buhae
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+  # 2. Chatlaxy Hosted Frontend (Render Static Site)
+  - type: web
+    name: chatlaxy
+    env: static
+    buildCommand: npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_CLOUDINARY_CLOUD_NAME
+        value: oc8buhae
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: chatlaxy-backend
+          property: host

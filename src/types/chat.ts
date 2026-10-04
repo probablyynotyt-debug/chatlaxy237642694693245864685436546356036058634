@@ -14,6 +14,8 @@ export interface GambleResultPayload {
 
 export interface ChatMessage {
   id: string;
+  serverId?: string | null;
+  channelId?: string | null;
   senderId: string; // 'user' | 'system'
   senderName: string;
   senderHandle: string;

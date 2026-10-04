@@ -27,11 +27,11 @@ import { getAuditLogs, clearAuditLogs, addAuditLog, AuditLogEntry } from '../uti
 import {
   subscribeToUsers,
   subscribeToAuditLogs,
-  saveUserToFirestore,
-  deleteUserFromFirestore,
-  clearAuditLogsInFirestore,
-  getAllUsersFromFirestore,
-  sendNotificationToFirestore,
+  saveUser,
+  deleteUser,
+  clearAuditLogsInBackend,
+  getAllUsers,
+  sendNotification,
 } from '../services/apiService';
 import { AppNotification } from '../types/notifications';
 
@@ -90,7 +90,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         read: false,
       };
 
-      await sendNotificationToFirestore(newNotif);
+      await sendNotification(newNotif);
 
       addAuditLog(
         currentUser.username,
@@ -117,7 +117,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Refresh data from cloud
   const refreshData = async () => {
     try {
-      const users = await getAllUsersFromFirestore();
+      const users = await getAllUsers();
       const usersMap: Record<string, ProfileData> = {};
       users.forEach((u) => {
         if (u.username) usersMap[u.username.toLowerCase().trim()] = u;
@@ -187,7 +187,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       localStorage.setItem('chatcloud_users', JSON.stringify(updatedAccounts));
     } catch {}
 
-    saveUserToFirestore(updatedUser).catch(() => {});
+    saveUser(updatedUser).catch(() => {});
 
     if (currentUser.username.toLowerCase() === lower) {
       onUpdateCurrentUser(updatedUser);
@@ -232,7 +232,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       localStorage.setItem('chatcloud_users', JSON.stringify(updatedAccounts));
     } catch {}
 
-    saveUserToFirestore(updatedUser).catch(() => {});
+    saveUser(updatedUser).catch(() => {});
 
     if (currentUser.username.toLowerCase() === lower) {
       onUpdateCurrentUser(updatedUser);
@@ -270,7 +270,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       localStorage.setItem('chatcloud_users', JSON.stringify(updatedAccounts));
     } catch {}
 
-    deleteUserFromFirestore(username).catch(() => {});
+    deleteUser(username).catch(() => {});
 
     addAuditLog(
       currentUser.username,

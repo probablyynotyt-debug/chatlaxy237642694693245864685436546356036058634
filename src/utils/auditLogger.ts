@@ -1,4 +1,4 @@
-import { addAuditLogToFirestore, clearAuditLogsInFirestore } from '../services/apiService';
+import { addAuditLogToBackend, clearAuditLogsInBackend } from '../services/apiService';
 
 export interface AuditLogEntry {
   id: string;
@@ -74,11 +74,11 @@ export function addAuditLog(
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch {}
 
-  // Sync admin logs to Firestore (routine user/chat events remain local)
+  // Sync admin logs to backend (routine user/chat events remain local)
   if (category === 'admin') {
     try {
-      addAuditLogToFirestore(entry).catch((err) =>
-        console.warn('Could not sync log to firestore:', err)
+      addAuditLogToBackend(entry).catch((err) =>
+        console.warn('Could not sync log to backend:', err)
       );
     } catch {}
   }
@@ -92,8 +92,8 @@ export function clearAuditLogs(): void {
   } catch {}
 
   try {
-    clearAuditLogsInFirestore().catch((err) =>
-      console.warn('Could not clear logs in firestore:', err)
+    clearAuditLogsInBackend().catch((err) =>
+      console.warn('Could not clear logs in backend:', err)
     );
   } catch {}
 }

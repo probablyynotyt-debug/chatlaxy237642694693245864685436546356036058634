@@ -1,6 +1,6 @@
 {
   "name": "Chatlaxy",
-  "description": "Real-time Firebase-powered live chat platform with profiles, servers, ranks, economy, and media customization.",
+  "description": "Real-time full-stack live chat platform with Neon PostgreSQL, WebSockets, rich profiles, servers, ranks, economy, and media customization.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

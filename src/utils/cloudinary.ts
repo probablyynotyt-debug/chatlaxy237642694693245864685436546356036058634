@@ -4,7 +4,7 @@ const UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`;
 
 /**
  * Compresses an image file/blob or base64 string to lightweight base64 Data URL
- * to avoid hitting Firestore document size limits (1MB) if offline or fallback.
+ * to optimize database storage and network bandwidth.
  */
 export async function compressImage(
   fileOrBase64: File | Blob | string,

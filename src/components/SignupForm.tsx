@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 import { GENDER_OPTIONS, AGE_OPTIONS } from '../constants/authOptions';
-import { getUserFromFirestore } from '../services/apiService';
+import { getUser } from '../services/apiService';
 
 interface SignupFormProps {
   onSwitchToLogin: () => void;
@@ -91,9 +91,9 @@ export const SignupForm: React.FC<SignupFormProps> = ({
     setIsLoading(true);
 
     try {
-      // Verify username uniqueness in live Firestore
+      // Verify username uniqueness with backend
       const cleanUsername = username.trim();
-      const existingUser = await getUserFromFirestore(cleanUsername);
+      const existingUser = await getUser(cleanUsername);
 
       if (existingUser) {
         setGeneralError('This username is already taken. Please choose another or log in.');
@@ -109,7 +109,7 @@ export const SignupForm: React.FC<SignupFormProps> = ({
         gender,
       });
     } catch (err: any) {
-      console.error('Firestore check error during signup:', err);
+      console.error('Check error during signup:', err);
       // If offline/error, proceed or show notification
       onSignupSuccess({
         username: username.trim(),

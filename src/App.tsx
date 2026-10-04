@@ -14,7 +14,7 @@ import { ChatlaxyLogo } from './components/ChatlaxyLogo';
 import { ProfileData } from './types/bio';
 import { RankId } from './types/ranks';
 import { addAuditLog } from './utils/auditLogger';
-import { signup, login, logout, getCurrentUser, saveUserToFirestore } from './services/apiService';
+import { signup, login, logout, getCurrentUser, saveUser } from './services/apiService';
 
 type ScreenStep = 'auth' | 'profile_setup' | 'chat' | 'admin';
 type AuthMode = 'login' | 'signup';
@@ -40,7 +40,7 @@ export default function App() {
   const [adminProfileModalTarget, setAdminProfileModalTarget] = useState<string | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
 
-  // Initialize and verify active session with Firebase Authentication & Firestore
+  // Initialize and verify active session with local backend
   useEffect(() => {
     const restoreSession = async () => {
       try {
@@ -50,7 +50,7 @@ export default function App() {
           setScreenStep('chat');
         }
       } catch (err) {
-        console.warn('Firebase session verification failed:', err);
+        console.warn('Session verification failed:', err);
       } finally {
         setIsAuthChecking(false);
       }
@@ -59,7 +59,7 @@ export default function App() {
     restoreSession();
   }, []);
 
-  // Transition from signup to profile setup: Immediately saves new user to Firestore
+  // Transition from signup to profile setup: Immediately saves new user to backend
   const handleSignupSuccess = async (data: {
     username: string;
     password?: string;
@@ -124,7 +124,7 @@ export default function App() {
     };
 
     try {
-      await saveUserToFirestore(completeProfile);
+      await saveUser(completeProfile);
     } catch (err) {
       console.warn('User profile update error:', err);
     }
@@ -139,7 +139,7 @@ export default function App() {
     setScreenStep('chat');
   };
 
-  // Update profile in state; only write to Firestore if explicitly requested
+  // Update profile in state; only write to backend if explicitly requested
   const handleUpdateCurrentUser = async (updated: ProfileData, persistToDb: boolean = false) => {
     const completeProfile: ProfileData = {
       ...updated,
@@ -152,7 +152,7 @@ export default function App() {
     setCurrentUserProfile(completeProfile);
     if (persistToDb) {
       try {
-        await saveUserToFirestore(completeProfile);
+        await saveUser(completeProfile);
       } catch (err) {
         console.warn('User update error:', err);
       }

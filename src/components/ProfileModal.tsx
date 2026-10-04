@@ -25,9 +25,9 @@ import { isFounderOrAbove } from '../utils/permissions';
 import { addAuditLog } from '../utils/auditLogger';
 import { uploadImageToCloudinary, uploadAudioToCloudinary } from '../utils/cloudinary';
 import {
-  saveUserToFirestore,
-  getUserFromFirestore,
-  sendNotificationToFirestore,
+  saveUser,
+  getUser,
+  sendNotification,
 } from '../services/apiService';
 import { AppNotification } from '../types/notifications';
 import { ProfileEffectCanvas } from './ProfileEffectCanvas';
@@ -100,7 +100,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const musicFileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Load target profile from allUsers, currentUser, or live Firestore
+  // Load target profile from allUsers, currentUser, or backend
   useEffect(() => {
     if (!isOpen || !targetUserId) return;
 
@@ -132,7 +132,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     ) {
       setActiveProfile(currentUser);
     } else {
-      // Set initial placeholder while fetching from Firestore
+      // Set initial placeholder while fetching from backend
       setActiveProfile({
         username: targetUserId,
         profilePicture: null,
@@ -143,15 +143,15 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       });
     }
 
-    // Fetch latest directly from Firestore (or in-memory cache)
-    getUserFromFirestore(cleanTarget)
+    // Fetch latest directly from backend (or in-memory cache)
+    getUser(cleanTarget)
       .then((doc) => {
         if (doc) {
           setActiveProfile(doc);
         }
       })
       .catch((err) => {
-        console.error('Error loading user profile from Firestore:', err);
+        console.error('Error loading user profile from backend:', err);
       });
   }, [targetUserId, isOpen]);
 
@@ -228,7 +228,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         timestamp: Date.now(),
         read: false,
       };
-      sendNotificationToFirestore(notif).catch((err) => {
+      sendNotification(notif).catch((err) => {
         console.warn('Error sending stalking notification:', err);
       });
     }
@@ -330,7 +330,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         timestamp: Date.now(),
         read: false,
       };
-      sendNotificationToFirestore(notif).catch((err) => {
+      sendNotification(notif).catch((err) => {
         console.warn('Error sending like notification:', err);
       });
     }
@@ -348,7 +348,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const saveProfileData = async (updated: ProfileData, fieldDescription?: string) => {
     setActiveProfile(updated);
     try {
-      await saveUserToFirestore(updated);
+      await saveUser(updated);
       if (!isOwner && fieldDescription) {
         addAuditLog(
           currentUser.username,
@@ -358,7 +358,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         );
       }
     } catch (err) {
-      console.error('Error saving updated profile to Firestore:', err);
+      console.error('Error saving updated profile to backend:', err);
     }
 
     if (isOwner) {

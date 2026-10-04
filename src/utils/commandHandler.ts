@@ -1,7 +1,7 @@
 import { ProfileData } from '../types/bio';
 import { ChatMessage, GambleResultPayload } from '../types/chat';
 import { SYSTEM_BOT } from '../constants/systemBot';
-import { saveUserToFirestore, setRiggedUserInFirestore, getUserFromFirestore } from '../services/apiService';
+import { saveUser, setRiggedUser, getUser } from '../services/apiService';
 
 export interface CommandExecutionResult {
   isCommand: boolean;
@@ -40,7 +40,7 @@ export function setRiggedStatus(username: string, rigged: boolean) {
   } catch {}
 
   try {
-    setRiggedUserInFirestore(username, rigged).catch(() => {});
+    setRiggedUser(username, rigged).catch(() => {});
   } catch {}
 }
 
@@ -192,7 +192,7 @@ export function handleChatCommand(
           };
           accounts[lowerTarget] = updatedTargetObj;
           localStorage.setItem('chatcloud_users', JSON.stringify(accounts));
-          saveUserToFirestore(updatedTargetObj).catch(() => {});
+          saveUser(updatedTargetObj).catch(() => {});
         }
       }
     } catch {}
