@@ -86,7 +86,7 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
   return (
     <div
       ref={dropdownRef}
-      className="absolute top-14 sm:top-16 right-2 sm:right-14 z-50 w-[calc(100vw-1rem)] max-w-xs sm:w-88 bg-[#181920] border border-[#2b2d39] rounded-lg shadow-2xl shadow-black overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 text-left select-none"
+      className="absolute top-14 sm:top-16 right-10 sm:right-14 z-50 w-80 sm:w-88 bg-[#181920] border border-[#2b2d39] rounded-lg shadow-2xl shadow-black overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 text-left select-none"
     >
       {/* ================================================== */}
       {/* HEADER: Notifications + Trash icon                 */}

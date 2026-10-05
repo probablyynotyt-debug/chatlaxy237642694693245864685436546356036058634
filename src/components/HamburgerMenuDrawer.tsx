@@ -1,15 +1,11 @@
 import React from 'react';
-import { X, Gift, Sparkles, Newspaper, Palette, Globe, Compass, MessageSquare } from 'lucide-react';
+import { X, Gift, Sparkles, Newspaper, Palette } from 'lucide-react';
 import { ChatlaxyLogo } from './ChatlaxyLogo';
 
 interface HamburgerMenuDrawerProps {
   isOpen: boolean;
   hasUnreadNews: boolean;
   onClose: () => void;
-  onOpenServers?: () => void;
-  onOpenExplore?: () => void;
-  onOpenMoments?: () => void;
-  onOpenChat?: () => void;
   onOpenDailyRewards: () => void;
   onOpenAvatarFrames: () => void;
   onOpenProfileDecorations?: () => void;
@@ -20,10 +16,6 @@ export const HamburgerMenuDrawer: React.FC<HamburgerMenuDrawerProps> = ({
   isOpen,
   hasUnreadNews,
   onClose,
-  onOpenServers,
-  onOpenExplore,
-  onOpenMoments,
-  onOpenChat,
   onOpenDailyRewards,
   onOpenAvatarFrames,
   onOpenProfileDecorations,
@@ -46,6 +38,7 @@ export const HamburgerMenuDrawer: React.FC<HamburgerMenuDrawerProps> = ({
       >
         {/* Drawer Header */}
         <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#23242e] bg-[#16171d]">
+          {/* Logo only - no extra buttons */}
           <div className="flex items-center">
             <ChatlaxyLogo size="sm" />
           </div>
@@ -62,68 +55,6 @@ export const HamburgerMenuDrawer: React.FC<HamburgerMenuDrawerProps> = ({
 
         {/* Drawer Body - Menu Items */}
         <div className="py-3 flex flex-col flex-1 px-2.5 gap-1 overflow-y-auto">
-          {/* Main Chat */}
-          {onOpenChat && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onOpenChat();
-              }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-neutral-200 hover:text-white hover:bg-[#1f2029] rounded-xs transition-all cursor-pointer text-left"
-            >
-              <MessageSquare className="w-4 h-4 text-violet-400 shrink-0" />
-              <span>Main Chat</span>
-            </button>
-          )}
-
-          {/* Servers Hub */}
-          {onOpenServers && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onOpenServers();
-              }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-neutral-200 hover:text-white hover:bg-[#1f2029] rounded-xs transition-all cursor-pointer text-left"
-            >
-              <Globe className="w-4 h-4 text-violet-400 shrink-0" />
-              <span>Servers & Communities</span>
-            </button>
-          )}
-
-          {/* Explore Page */}
-          {onOpenExplore && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onOpenExplore();
-              }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-neutral-200 hover:text-white hover:bg-[#1f2029] rounded-xs transition-all cursor-pointer text-left"
-            >
-              <Compass className="w-4 h-4 text-violet-400 shrink-0" />
-              <span>Explore Chatlaxy</span>
-            </button>
-          )}
-
-          {/* Moments */}
-          {onOpenMoments && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onOpenMoments();
-              }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-neutral-200 hover:text-white hover:bg-[#1f2029] rounded-xs transition-all cursor-pointer text-left"
-            >
-              <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Moments (24h Posts)</span>
-            </button>
-          )}
-
-          <div className="h-px bg-[#23242e] my-1.5" />
-
           {/* News Item */}
           <button
             type="button"
@@ -135,7 +66,7 @@ export const HamburgerMenuDrawer: React.FC<HamburgerMenuDrawerProps> = ({
           >
             <div className="flex items-center gap-3">
               <Newspaper className="w-4 h-4 text-sky-400 shrink-0" />
-              <span>News & Announcements</span>
+              <span>News</span>
             </div>
             {hasUnreadNews && (
               <span

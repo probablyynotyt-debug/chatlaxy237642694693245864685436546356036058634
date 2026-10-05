@@ -96,22 +96,4 @@ export interface ProfileData {
     pfpBorder?: string;
     backgroundEffect?: string;
   };
-  status?: 'online' | 'idle' | 'dnd' | 'offline';
-  customStatus?: string;
-  statusEmoji?: string;
-  xp?: number;
-  level?: number;
-  streak?: number;
-  blockedUsers?: string[];
-  mutedUsers?: string[];
-  following?: string[];
-  followers?: string[];
-  bookmarks?: string[];
-  socialLinks?: {
-    twitter?: string;
-    github?: string;
-    discord?: string;
-    website?: string;
-  };
-  profileVisitors?: number;
 }

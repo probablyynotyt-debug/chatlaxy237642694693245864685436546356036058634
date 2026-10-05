@@ -65,7 +65,7 @@ export const NewsPanel: React.FC<NewsPanelProps> = ({
   };
 
   return (
-    <aside className="fixed sm:relative inset-0 sm:inset-auto z-40 sm:z-10 w-full sm:w-84 md:w-96 lg:w-[400px] h-full bg-[#141519] border-r border-[#24252c] flex flex-col shrink-0 overflow-hidden select-none animate-in slide-in-from-left duration-200 shadow-2xl">
+    <aside className="w-full sm:w-84 md:w-96 lg:w-[400px] bg-[#141519] border-r border-[#24252c] flex flex-col shrink-0 overflow-hidden select-none z-10 animate-in slide-in-from-left duration-200">
       {/* Header */}
       <div className="h-14 px-4 bg-[#16171d] border-b border-[#23242e] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">

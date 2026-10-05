@@ -251,12 +251,6 @@ export function subscribeToMessages(
     }
   });
 
-  const unsubUpdate = socketService.onMessageUpdated((updatedMsg) => {
-    if (!isMounted) return;
-    currentMessages = currentMessages.map((m) => (m.id === updatedMsg.id ? updatedMsg : m));
-    callback([...currentMessages]);
-  });
-
   const unsubDel = socketService.onMessageDeleted((data) => {
     if (!isMounted) return;
     currentMessages = currentMessages.filter((m) => m.id !== data.id);
@@ -313,41 +307,6 @@ export async function sendMessage(
       channelId: channelId || null,
     }),
   });
-}
-
-export async function editMessage(id: string, content: string): Promise<ChatMessage | null> {
-  const res = await apiFetch(`/api/messages/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) return null;
-  return res.json();
-}
-
-export async function togglePinMessage(id: string): Promise<ChatMessage | null> {
-  const res = await apiFetch(`/api/messages/${encodeURIComponent(id)}/pin`, {
-    method: 'POST',
-  });
-  if (!res.ok) return null;
-  return res.json();
-}
-
-export async function toggleReactMessage(id: string, emoji: string): Promise<ChatMessage | null> {
-  const res = await apiFetch(`/api/messages/${encodeURIComponent(id)}/react`, {
-    method: 'POST',
-    body: JSON.stringify({ emoji }),
-  });
-  if (!res.ok) return null;
-  return res.json();
-}
-
-export async function votePollMessage(id: string, optionId: string): Promise<ChatMessage | null> {
-  const res = await apiFetch(`/api/messages/${encodeURIComponent(id)}/poll-vote`, {
-    method: 'POST',
-    body: JSON.stringify({ optionId }),
-  });
-  if (!res.ok) return null;
-  return res.json();
 }
 
 export async function deleteMessage(

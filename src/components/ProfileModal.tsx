@@ -635,7 +635,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
       {/* Main Profile Dialog Window */}
       <div
-        className={`relative z-10 w-full max-w-sm sm:max-w-md max-h-[92dvh] overflow-y-auto bg-[#141519] rounded-xs shadow-2xl flex flex-col text-left select-none animate-in zoom-in-95 duration-150 transition-all ${activeBorderConfig.cardClasses}`}
+        className={`relative z-10 w-full max-w-sm sm:max-w-md bg-[#141519] rounded-xs shadow-2xl overflow-hidden flex flex-col text-left select-none animate-in zoom-in-95 duration-150 transition-all ${activeBorderConfig.cardClasses}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Profile Decoration: Collectible Animated Overlay across the entire profile */}

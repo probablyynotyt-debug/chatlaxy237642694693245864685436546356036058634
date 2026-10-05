@@ -60,7 +60,7 @@ export const ProfileDecorationsModal: React.FC<ProfileDecorationsModalProps> = (
       <div className="absolute inset-0" onClick={onClose} />
 
       <div
-        className="relative z-10 w-full max-w-sm sm:max-w-md max-h-[90vh] overflow-y-auto bg-[#141519] border border-[#2c2d38] rounded-xs shadow-2xl shadow-black flex flex-col text-left select-none animate-in zoom-in-95 duration-150"
+        className="relative z-10 w-full max-w-sm sm:max-w-md bg-[#141519] border border-[#2c2d38] rounded-xs shadow-2xl shadow-black overflow-hidden flex flex-col text-left select-none animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* ================================================== */}
