@@ -12,6 +12,17 @@ export interface GambleResultPayload {
   payoutAmount: number;
 }
 
+export interface PollOption {
+  id: string;
+  text: string;
+  votes: string[]; // usernames
+}
+
+export interface PollData {
+  question: string;
+  options: PollOption[];
+}
+
 export interface ChatMessage {
   id: string;
   serverId?: string | null;
@@ -21,6 +32,7 @@ export interface ChatMessage {
   senderHandle: string;
   senderAvatar: string | null;
   senderAvatarFrame?: string | null;
+  senderRank?: string | null;
   senderCustomRankName?: string | null;
   senderUsernameStyle?: TextStyleConfig | null;
   contentStyle?: TextStyleConfig | null;
@@ -35,6 +47,11 @@ export interface ChatMessage {
   timestamp: number;
   formattedTime: string;
   gamblePayload?: GambleResultPayload;
+  isEdited?: boolean;
+  isPinned?: boolean;
+  reactions?: Record<string, string[]>; // emoji -> array of usernames
+  pollData?: PollData | null;
+  codeLanguage?: string | null;
 }
 
 export interface ReplyContext {

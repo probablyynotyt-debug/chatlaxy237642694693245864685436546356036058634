@@ -22,8 +22,21 @@ import {
   Square,
   Trash2,
   Loader2,
+  BarChart2,
+  Search,
+  Pin,
+  Bookmark,
 } from 'lucide-react';
+import { CreatePollModal } from './CreatePollModal';
+import { MessageSearchBookmarksModal } from './MessageSearchBookmarksModal';
+import { MomentsModal } from './MomentsModal';
+import { ThreadPanel } from './ThreadPanel';
+import { ReportModal } from './ReportModal';
+import { GifStickerPickerModal } from './GifStickerPickerModal';
+import { ExplorePageModal } from './ExplorePageModal';
+import { MobileBottomNav } from './MobileBottomNav';
 import { uploadNewsMediaToCloudinary } from '../utils/cloudinary';
+import { apiFetch, getAuthToken } from '../config/apiConfig';
 import { ChatMessage, ReplyContext } from '../types/chat';
 import { ProfileData } from '../types/bio';
 import { ChatMessageItem } from './ChatMessageItem';
@@ -46,6 +59,7 @@ import { ServerAdminPanel } from './ServerAdminPanel';
 import { AppNotification } from '../types/notifications';
 import { NewsPost, NewsReactionType } from '../types/news';
 import { handleChatCommand } from '../utils/commandHandler';
+import { socketService } from '../services/socketService';
 import { isFounderOrAbove } from '../utils/permissions';
 import { addAuditLog } from '../utils/auditLogger';
 import {
@@ -146,6 +160,179 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  // Poll, Search, Moments, Thread, Report, Gif/Sticker & Explore Feature Modal States
+  const [isCreatePollOpen, setIsCreatePollOpen] = useState(false);
+  const [isSearchBookmarksOpen, setIsSearchBookmarksOpen] = useState(false);
+  const [searchBookmarksMode, setSearchBookmarksMode] = useState<'search' | 'bookmarks' | 'pinned'>('search');
+  const [isMomentsOpen, setIsMomentsOpen] = useState(false);
+  const [threadParentMessage, setThreadParentMessage] = useState<ChatMessage | null>(null);
+  const [reportTargetMessage, setReportTargetMessage] = useState<ChatMessage | null>(null);
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [isGifStickerOpen, setIsGifStickerOpen] = useState(false);
+  const [isExploreOpen, setIsExploreOpen] = useState(false);
+  const [isMobileOnlineOpen, setIsMobileOnlineOpen] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const typingTimeoutRef = useRef<any>(null);
+
+  // Automatic Away Timer: set status to 'idle' after 3 minutes of inactivity
+  useEffect(() => {
+    let awayTimer: any;
+    const resetTimer = () => {
+      if (awayTimer) clearTimeout(awayTimer);
+      if (currentUser.status === 'idle') {
+        onUpdateCurrentUser({ ...currentUser, status: 'online' });
+      }
+      awayTimer = setTimeout(() => {
+        if (currentUser.status === 'online') {
+          onUpdateCurrentUser({ ...currentUser, status: 'idle' });
+        }
+      }, 3 * 60 * 1000);
+    };
+
+    window.addEventListener('mousemove', resetTimer);
+    window.addEventListener('keydown', resetTimer);
+    resetTimer();
+
+    return () => {
+      if (awayTimer) clearTimeout(awayTimer);
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('keydown', resetTimer);
+    };
+  }, [currentUser.status]);
+
+  // Handlers for Rich Message Actions
+  const handleReactMessage = async (messageId: string, emoji: string) => {
+    try {
+      const res = await apiFetch(`/api/messages/${messageId}/react`, {
+        method: 'POST',
+        body: JSON.stringify({ emoji }),
+      });
+      if (res.ok) {
+        const updatedMsg = await res.json();
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? updatedMsg : m)));
+      }
+    } catch (err) {
+      console.error('React error:', err);
+    }
+  };
+
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    try {
+      const res = await apiFetch(`/api/messages/${messageId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content: newContent }),
+      });
+      if (res.ok) {
+        const updatedMsg = await res.json();
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? updatedMsg : m)));
+      }
+    } catch (err) {
+      console.error('Edit error:', err);
+    }
+  };
+
+  const handlePinMessage = async (messageId: string) => {
+    try {
+      const res = await apiFetch(`/api/messages/${messageId}/pin`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const updatedMsg = await res.json();
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? updatedMsg : m)));
+      }
+    } catch (err) {
+      console.error('Pin error:', err);
+    }
+  };
+
+  const handleBookmarkMessage = async (messageId: string) => {
+    const currentBookmarks = currentUser.bookmarks || [];
+    const newBookmarks = currentBookmarks.includes(messageId)
+      ? currentBookmarks.filter((id) => id !== messageId)
+      : [...currentBookmarks, messageId];
+
+    const updated = { ...currentUser, bookmarks: newBookmarks };
+    onUpdateCurrentUser(updated);
+    await saveUser(updated);
+  };
+
+  const handleVotePoll = async (messageId: string, optionId: string) => {
+    try {
+      const res = await apiFetch(`/api/messages/${messageId}/poll-vote`, {
+        method: 'POST',
+        body: JSON.stringify({ optionId }),
+      });
+      if (res.ok) {
+        const updatedMsg = await res.json();
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? updatedMsg : m)));
+      }
+    } catch (err) {
+      console.error('Poll vote error:', err);
+    }
+  };
+
+  const handleSendThreadReply = (parentMessageId: string, text: string) => {
+    handleSendMessage(undefined, `Replying in thread to message ${parentMessageId}: ${text}`);
+  };
+
+  const handleSubmitReport = async (reason: string, details: string) => {
+    try {
+      await apiFetch('/api/audit-logs', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'user_report',
+          actor: currentUser.username,
+          category: 'report',
+          details: `Reported message ${reportTargetMessage?.id || 'N/A'}. Reason: ${reason}. Details: ${details}`,
+        }),
+      });
+    } catch (err) {
+      console.error('Report error:', err);
+    }
+  };
+
+  const handleSelectGif = (gifUrl: string) => {
+    setAttachedMedia({
+      url: gifUrl,
+      type: 'gif',
+      name: 'GIF Attachment',
+    });
+  };
+
+  const handleSelectSticker = (stickerUrl: string) => {
+    setAttachedMedia({
+      url: stickerUrl,
+      type: 'image',
+      name: 'Chatlaxy Sticker',
+    });
+  };
+
+  // Typing Indicators Listener
+  useEffect(() => {
+    const unsub = socketService.onTyping(({ username, isTyping }) => {
+      if (username.toLowerCase() === currentUser.username.toLowerCase()) return;
+      setTypingUsers((prev) => {
+        if (isTyping) {
+          return prev.includes(username) ? prev : [...prev, username];
+        } else {
+          return prev.filter((u) => u !== username);
+        }
+      });
+    });
+    return () => unsub();
+  }, [currentUser.username]);
+
+  // Handle typing send
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputText(e.target.value);
+    socketService.sendTyping(true);
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      socketService.sendTyping(false);
+    }, 2000);
+  };
 
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
@@ -591,6 +778,37 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     setRecordingSeconds(0);
   };
 
+  // Create Poll Handler
+  const handleCreatePoll = async (poll: any) => {
+    const now = new Date();
+    const formattedTime = now.toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
+    const pollMessage: ChatMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      senderId: 'user',
+      senderName: currentUser.username,
+      senderHandle: `@${currentUser.username.toLowerCase().replace(/\s+/g, '')}`,
+      senderAvatar: currentUser.profilePicture,
+      senderAvatarFrame: currentUser.avatarFrame || currentUser.effects?.pfpBorder || null,
+      senderRank: effectiveRank as any,
+      senderCustomRankName: effectiveCustomRankName,
+      senderUsernameStyle: currentUser.usernameStyle || null,
+      contentStyle: currentUser.chatTextStyle || null,
+      isSystemBot: false,
+      content: `📊 Poll: ${poll.question}`,
+      pollData: poll,
+      timestamp: Date.now(),
+      formattedTime,
+      serverId: activeServer?.id || null,
+      channelId: activeServer ? (activeChannel?.id || 'general') : null,
+    };
+
+    await sendMessage(pollMessage, activeServer?.id || null, activeServer ? (activeChannel?.id || 'general') : null);
+  };
+
   // Determine server permissions & ranks
   const isServerOwner = activeServer
     ? activeServer.owner.toLowerCase().trim() === currentUser.username.toLowerCase().trim()
@@ -617,9 +835,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     : currentUser.customRankName;
 
   // Handle sending message
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = inputText.trim();
+  const handleSendMessage = async (e?: React.FormEvent, directText?: string) => {
+    if (e) e.preventDefault();
+    const trimmed = (directText !== undefined ? directText : inputText).trim();
     const hasMedia = Boolean(attachedMedia);
 
     if (!trimmed && !hasMedia) return;
@@ -835,8 +1053,67 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           <ChatlaxyLogo size="md" />
         </div>
 
-        {/* Right: Notifications + Profile Avatar */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        {/* Right: Search, Pin, Bookmark, Moments, Explore, Notifications + Profile Avatar */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5">
+          {/* Explore Page Button */}
+          <button
+            type="button"
+            onClick={() => setIsExploreOpen(true)}
+            title="Explore Chatlaxy (Trending, Profiles, Activity)"
+            className="p-1.5 text-violet-400 hover:text-violet-300 hover:bg-violet-950/30 border border-violet-500/30 rounded-full transition-colors cursor-pointer"
+          >
+            <Compass className="w-4 h-4" />
+          </button>
+
+          {/* Moments Button */}
+          <button
+            type="button"
+            onClick={() => setIsMomentsOpen(true)}
+            title="Chatlaxy Moments (24h Posts)"
+            className="p-1.5 text-amber-400 hover:text-amber-300 hover:bg-amber-950/30 border border-amber-500/30 rounded-full transition-colors cursor-pointer"
+          >
+            <Sparkles className="w-4 h-4" />
+          </button>
+
+          {/* Search Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setSearchBookmarksMode('search');
+              setIsSearchBookmarksOpen(true);
+            }}
+            title="Search Messages"
+            className="p-1.5 text-neutral-300 hover:text-white hover:bg-[#20222c] rounded-full transition-colors cursor-pointer"
+          >
+            <Search className="w-4 h-4" />
+          </button>
+
+          {/* Pinned Messages Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setSearchBookmarksMode('pinned');
+              setIsSearchBookmarksOpen(true);
+            }}
+            title="Pinned Messages"
+            className="p-1.5 text-neutral-300 hover:text-white hover:bg-[#20222c] rounded-full transition-colors cursor-pointer"
+          >
+            <Pin className="w-4 h-4 text-violet-400" />
+          </button>
+
+          {/* Bookmarks Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setSearchBookmarksMode('bookmarks');
+              setIsSearchBookmarksOpen(true);
+            }}
+            title="Bookmarked Messages"
+            className="p-1.5 text-neutral-300 hover:text-white hover:bg-[#20222c] rounded-full transition-colors cursor-pointer"
+          >
+            <Bookmark className="w-4 h-4 text-sky-400" />
+          </button>
+
           <button
             type="button"
             onClick={handleToggleNotifications}
@@ -1040,10 +1317,21 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                         isAlternateBg={isAlternateBg}
                         canModerate={isFounderOrAbove(currentUser) || isServerOwner}
                         senderProfile={senderProfile}
+                        bookmarkedIds={currentUser.bookmarks || []}
                         onReply={handleReply}
                         onHide={handleHide}
                         onDelete={handleDelete}
                         onOpenProfile={(target) => setActiveProfileTarget(target)}
+                        onReact={handleReactMessage}
+                        onEdit={handleEditMessage}
+                        onPin={handlePinMessage}
+                        onBookmark={handleBookmarkMessage}
+                        onOpenThread={(m) => setThreadParentMessage(m)}
+                        onReport={(m) => {
+                          setReportTargetMessage(m);
+                          setIsReportOpen(true);
+                        }}
+                        onVotePoll={handleVotePoll}
                       />
                     );
                   })}
@@ -1137,6 +1425,15 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                   </div>
                 )}
 
+                {/* Typing Indicator Banner */}
+                {typingUsers.length > 0 && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-[#181a24] text-[11px] text-violet-300 rounded border border-violet-900/40 animate-in fade-in duration-150">
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-ping shrink-0" />
+                    <span className="font-semibold">{typingUsers.join(', ')}</span>
+                    <span className="text-neutral-400">{typingUsers.length === 1 ? 'is typing...' : 'are typing...'}</span>
+                  </div>
+                )}
+
                 {/* Uploading Media Spinner Indicator */}
                 {isUploadingChatMedia && (
                   <div className="flex items-center gap-2 p-2 bg-[#1b1d27] border border-[#2a2c3a] rounded-md text-xs text-neutral-300 animate-pulse">
@@ -1225,11 +1522,33 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                       <Mic className="w-4 h-4" />
                     </button>
 
+                    {/* Create Poll Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsCreatePollOpen(true)}
+                      disabled={isUploadingChatMedia}
+                      title="Create Poll (/poll)"
+                      className="p-2.5 bg-[#1a1b22] hover:bg-violet-950/40 text-neutral-400 hover:text-violet-300 border border-[#2b2d39] hover:border-violet-500/50 rounded-md transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      <BarChart2 className="w-4 h-4" />
+                    </button>
+
+                    {/* GIFs & Stickers Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsGifStickerOpen(true)}
+                      disabled={isUploadingChatMedia}
+                      title="GIFs & Stickers"
+                      className="p-2.5 bg-[#1a1b22] hover:bg-violet-950/40 text-neutral-400 hover:text-violet-300 border border-[#2b2d39] hover:border-violet-500/50 rounded-md transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      <ImageIcon className="w-4 h-4" />
+                    </button>
+
                     <input
                       ref={inputRef}
                       type="text"
                       value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
+                      onChange={handleInputChange}
                       placeholder={
                         activeServer
                           ? `Message #${activeChannel?.name || 'general'} in ${activeServer.name}...`
@@ -1252,15 +1571,39 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           </div>
         )}
 
-        {/* Right-Side Online Players Panel (Filtered to active server space if inside one) */}
+        {/* Right-Side Online Players Panel (Desktop Sidebar) */}
         <OnlinePlayersPanel
           currentUser={currentUser}
           allUsers={allUsers}
-          server={activeServer}
-          serverMembers={serverMembers}
           onOpenProfile={(userId) => setActiveProfileTarget(userId)}
         />
       </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav
+        activeTab={isServerHubOpen ? 'servers' : 'chat'}
+        onlineCount={Object.keys(allUsers).length || 1}
+        hasUnreadNews={hasUnreadNews}
+        onOpenChat={() => {
+          setIsServerHubOpen(false);
+          setActiveServer(null);
+        }}
+        onOpenServers={() => setIsServerHubOpen(true)}
+        onOpenExplore={() => setIsExploreOpen(true)}
+        onOpenMoments={() => setIsMomentsOpen(true)}
+        onOpenOnlineUsers={() => setIsMobileOnlineOpen(true)}
+        onOpenNews={handleOpenNews}
+      />
+
+      {/* Mobile Online Users Slide-over Drawer */}
+      <OnlinePlayersPanel
+        currentUser={currentUser}
+        allUsers={allUsers}
+        onOpenProfile={(userId) => setActiveProfileTarget(userId)}
+        isMobileDrawer={true}
+        isOpen={isMobileOnlineOpen}
+        onClose={() => setIsMobileOnlineOpen(false)}
+      />
 
       {/* Profile Modal */}
       <ProfileModal
@@ -1302,9 +1645,13 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         isOpen={isHamburgerOpen}
         hasUnreadNews={hasUnreadNews}
         onClose={() => setIsHamburgerOpen(false)}
-        onOpenServers={() => {
-          setIsServerHubOpen(true);
+        onOpenChat={() => {
+          setIsServerHubOpen(false);
+          setActiveServer(null);
         }}
+        onOpenServers={() => setIsServerHubOpen(true)}
+        onOpenExplore={() => setIsExploreOpen(true)}
+        onOpenMoments={() => setIsMomentsOpen(true)}
         onOpenDailyRewards={() => setIsDailyRewardsOpen(true)}
         onOpenAvatarFrames={() => setIsAvatarFramesOpen(true)}
         onOpenProfileDecorations={() => setIsProfileDecorationsOpen(true)}
@@ -1374,6 +1721,64 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           onServerDeleted={handleServerDeleted}
         />
       )}
+      {/* Create Poll Modal */}
+      <CreatePollModal
+        isOpen={isCreatePollOpen}
+        onClose={() => setIsCreatePollOpen(false)}
+        onCreatePoll={handleCreatePoll}
+      />
+
+      {/* Message Search, Bookmarks, and Pins Modal */}
+      <MessageSearchBookmarksModal
+        isOpen={isSearchBookmarksOpen}
+        mode={searchBookmarksMode}
+        messages={messages}
+        bookmarkedIds={currentUser.bookmarks || []}
+        onClose={() => setIsSearchBookmarksOpen(false)}
+      />
+
+      {/* Moments Modal */}
+      <MomentsModal
+        isOpen={isMomentsOpen}
+        currentUser={currentUser}
+        onClose={() => setIsMomentsOpen(false)}
+      />
+
+      {/* Thread Panel Drawer */}
+      {threadParentMessage && (
+        <div className="fixed inset-y-0 right-0 z-40 flex">
+          <ThreadPanel
+            parentMessage={threadParentMessage}
+            onClose={() => setThreadParentMessage(null)}
+            onSendThreadReply={handleSendThreadReply}
+          />
+        </div>
+      )}
+
+      {/* Report Modal */}
+      <ReportModal
+        isOpen={isReportOpen}
+        targetMessage={reportTargetMessage}
+        onClose={() => setIsReportOpen(false)}
+        onSubmitReport={handleSubmitReport}
+      />
+
+      {/* GIF & Sticker Picker Modal */}
+      <GifStickerPickerModal
+        isOpen={isGifStickerOpen}
+        onClose={() => setIsGifStickerOpen(false)}
+        onSelectGif={handleSelectGif}
+        onSelectSticker={handleSelectSticker}
+      />
+
+      {/* Explore Page Modal */}
+      <ExplorePageModal
+        isOpen={isExploreOpen}
+        messages={messages}
+        allUsers={allUsers}
+        onClose={() => setIsExploreOpen(false)}
+        onOpenProfile={(u) => setActiveProfileTarget(u)}
+      />
     </div>
   );
 };

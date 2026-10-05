@@ -147,6 +147,19 @@ function formatUser(row) {
     dailyMessagesCount: Number(row.dailyMessagesCount) || 0,
     claimedDailyMilestones: row.claimedDailyMilestones ? JSON.parse(row.claimedDailyMilestones) : [],
     lastDailyClaim: Number(row.lastDailyClaim) || 0,
+    status: row.status || 'online',
+    customStatus: row.customStatus || '',
+    statusEmoji: row.statusEmoji || '',
+    xp: Number(row.xp) || 0,
+    level: Number(row.level) || 1,
+    streak: Number(row.streak) || 1,
+    blockedUsers: row.blockedUsers ? JSON.parse(row.blockedUsers) : [],
+    mutedUsers: row.mutedUsers ? JSON.parse(row.mutedUsers) : [],
+    following: row.following ? JSON.parse(row.following) : [],
+    followers: row.followers ? JSON.parse(row.followers) : [],
+    bookmarks: row.bookmarks ? JSON.parse(row.bookmarks) : [],
+    socialLinks: row.socialLinks ? JSON.parse(row.socialLinks) : {},
+    profileVisitors: Number(row.profileVisitors) || 0,
     lastActive: Number(row.lastActive) || Date.now(),
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt),
@@ -211,6 +224,15 @@ wss.on('connection', (ws) => {
         meta.serverId = data.serverId || null;
         meta.channelId = data.channelId || null;
         clients.set(ws, meta);
+      } else if (data.type === 'typing') {
+        const meta = clients.get(ws) || {};
+        if (meta.username) {
+          broadcast({
+            type: 'user_typing',
+            username: meta.username,
+            isTyping: Boolean(data.isTyping),
+          });
+        }
       } else if (data.type === 'ping') {
         ws.send(JSON.stringify({ type: 'pong' }));
       }
@@ -406,6 +428,16 @@ app.put('/api/users/:username', verifyAuth, async (req, res) => {
         dailyMessagesCount = COALESCE(?, dailyMessagesCount),
         claimedDailyMilestones = COALESCE(?, claimedDailyMilestones),
         lastDailyClaim = COALESCE(?, lastDailyClaim),
+        status = COALESCE(?, status),
+        customStatus = ?,
+        statusEmoji = ?,
+        socialLinks = ?,
+        bookmarks = COALESCE(?, bookmarks),
+        blockedUsers = COALESCE(?, blockedUsers),
+        mutedUsers = COALESCE(?, mutedUsers),
+        following = COALESCE(?, following),
+        followers = COALESCE(?, followers),
+        profileVisitors = COALESCE(?, profileVisitors),
         lastActive = ?,
         updatedAt = ?
       WHERE LOWER(username) = ?`,
@@ -436,6 +468,16 @@ app.put('/api/users/:username', verifyAuth, async (req, res) => {
         updates.dailyMessagesCount ?? null,
         updates.claimedDailyMilestones ? JSON.stringify(updates.claimedDailyMilestones) : null,
         updates.lastDailyClaim ?? null,
+        updates.status ?? null,
+        updates.customStatus !== undefined ? updates.customStatus : existing.customStatus,
+        updates.statusEmoji !== undefined ? updates.statusEmoji : existing.statusEmoji,
+        updates.socialLinks ? JSON.stringify(updates.socialLinks) : null,
+        updates.bookmarks ? JSON.stringify(updates.bookmarks) : null,
+        updates.blockedUsers ? JSON.stringify(updates.blockedUsers) : null,
+        updates.mutedUsers ? JSON.stringify(updates.mutedUsers) : null,
+        updates.following ? JSON.stringify(updates.following) : null,
+        updates.followers ? JSON.stringify(updates.followers) : null,
+        updates.profileVisitors ?? null,
         now,
         now,
         targetUsername
@@ -509,6 +551,11 @@ function formatMessage(row) {
     mediaUrl: row.mediaUrl || null,
     mediaType: row.mediaType || null,
     gamblePayload: row.gamblePayload ? (typeof row.gamblePayload === 'string' ? JSON.parse(row.gamblePayload) : row.gamblePayload) : null,
+    isEdited: Boolean(row.isEdited),
+    isPinned: Boolean(row.isPinned),
+    reactions: row.reactions ? (typeof row.reactions === 'string' ? JSON.parse(row.reactions) : row.reactions) : {},
+    pollData: row.pollData ? (typeof row.pollData === 'string' ? JSON.parse(row.pollData) : row.pollData) : null,
+    codeLanguage: row.codeLanguage || null,
   };
 }
 
@@ -551,8 +598,8 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
       `INSERT INTO messages (
         id, senderName, content, timestamp,
         senderAvatar, senderAvatarFrame, senderRank, senderCustomRankName,
-        senderUsernameStyle, isSystemBot, replyTo, attachments, mediaUrl, mediaType, gamblePayload, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        senderUsernameStyle, isSystemBot, replyTo, attachments, mediaUrl, mediaType, gamblePayload, pollData, codeLanguage, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         msg.senderName,
@@ -569,9 +616,21 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
         msg.mediaUrl || null,
         msg.mediaType || null,
         msg.gamblePayload ? JSON.stringify(msg.gamblePayload) : null,
+        msg.pollData ? JSON.stringify(msg.pollData) : null,
+        msg.codeLanguage || null,
         Date.now(),
       ]
     );
+
+    // Award XP to sender
+    if (msg.senderName && msg.senderName !== 'Chatlaxy') {
+      const senderRow = await getOne('SELECT id, xp, level FROM users WHERE LOWER(username) = ?', [msg.senderName.toLowerCase()]);
+      if (senderRow) {
+        const newXp = (Number(senderRow.xp) || 0) + 10;
+        const newLevel = Math.floor(newXp / 100) + 1;
+        await execute('UPDATE users SET xp = ?, level = ? WHERE id = ?', [newXp, newLevel, senderRow.id]);
+      }
+    }
 
     const formatted = formatMessage({
       id,
@@ -589,6 +648,8 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
       mediaUrl: msg.mediaUrl || null,
       mediaType: msg.mediaType || null,
       gamblePayload: msg.gamblePayload ? JSON.stringify(msg.gamblePayload) : null,
+      pollData: msg.pollData ? JSON.stringify(msg.pollData) : null,
+      codeLanguage: msg.codeLanguage || null,
     });
 
     broadcast({
@@ -599,6 +660,110 @@ app.post('/api/messages', optionalAuth, async (req, res) => {
     return res.status(201).json(formatted);
   } catch (err) {
     console.error('Send message error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit Message
+app.put('/api/messages/:id', verifyAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { content } = req.body;
+    await execute('UPDATE messages SET content = ?, isEdited = 1 WHERE id = ?', [content, id]);
+    const updated = await getOne('SELECT * FROM messages WHERE id = ?', [id]);
+    const formatted = formatMessage(updated);
+    broadcast({
+      type: 'message_updated',
+      message: formatted,
+    });
+    return res.json(formatted);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Toggle Pin Message
+app.post('/api/messages/:id/pin', verifyAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const msg = await getOne('SELECT * FROM messages WHERE id = ?', [id]);
+    if (!msg) return res.status(404).json({ error: 'Message not found' });
+    const newPinned = msg.isPinned ? 0 : 1;
+    await execute('UPDATE messages SET isPinned = ? WHERE id = ?', [newPinned, id]);
+    const updated = await getOne('SELECT * FROM messages WHERE id = ?', [id]);
+    const formatted = formatMessage(updated);
+    broadcast({
+      type: 'message_updated',
+      message: formatted,
+    });
+    return res.json(formatted);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Toggle Reaction on Message
+app.post('/api/messages/:id/react', verifyAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { emoji } = req.body;
+    const username = req.username;
+
+    const msg = await getOne('SELECT * FROM messages WHERE id = ?', [id]);
+    if (!msg) return res.status(404).json({ error: 'Message not found' });
+
+    let reactions = msg.reactions ? (typeof msg.reactions === 'string' ? JSON.parse(msg.reactions) : msg.reactions) : {};
+    if (!reactions[emoji]) reactions[emoji] = [];
+
+    const existingIdx = reactions[emoji].indexOf(username);
+    if (existingIdx >= 0) {
+      reactions[emoji].splice(existingIdx, 1);
+      if (reactions[emoji].length === 0) delete reactions[emoji];
+    } else {
+      reactions[emoji].push(username);
+    }
+
+    await execute('UPDATE messages SET reactions = ? WHERE id = ?', [JSON.stringify(reactions), id]);
+    const updated = await getOne('SELECT * FROM messages WHERE id = ?', [id]);
+    const formatted = formatMessage(updated);
+    broadcast({
+      type: 'message_updated',
+      message: formatted,
+    });
+    return res.json(formatted);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Vote on Message Poll
+app.post('/api/messages/:id/poll-vote', verifyAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { optionId } = req.body;
+    const username = req.username;
+
+    const msg = await getOne('SELECT * FROM messages WHERE id = ?', [id]);
+    if (!msg || !msg.pollData) return res.status(400).json({ error: 'Poll not found' });
+
+    let poll = typeof msg.pollData === 'string' ? JSON.parse(msg.pollData) : msg.pollData;
+
+    poll.options.forEach((opt) => {
+      opt.votes = opt.votes.filter((u) => u !== username);
+      if (opt.id === optionId) {
+        opt.votes.push(username);
+      }
+    });
+
+    await execute('UPDATE messages SET pollData = ? WHERE id = ?', [JSON.stringify(poll), id]);
+    const updated = await getOne('SELECT * FROM messages WHERE id = ?', [id]);
+    const formatted = formatMessage(updated);
+    broadcast({
+      type: 'message_updated',
+      message: formatted,
+    });
+    return res.json(formatted);
+  } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });

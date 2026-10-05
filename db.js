@@ -182,6 +182,15 @@ export async function query(sql, params = []) {
           recipientusername: 'recipientUsername',
           senderusername: 'senderUsername',
           formattedtime: 'formattedTime',
+          isedited: 'isEdited',
+          ispinned: 'isPinned',
+          polldata: 'pollData',
+          customstatus: 'customStatus',
+          statusemoji: 'statusEmoji',
+          blockedusers: 'blockedUsers',
+          mutedusers: 'mutedUsers',
+          sociallinks: 'socialLinks',
+          profilevisitors: 'profileVisitors',
         };
         const mappedKey = keyMap[k.toLowerCase()] || k;
         normalized[mappedKey] = v;
@@ -415,20 +424,25 @@ export async function initDatabase() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS dailyMessagesCount BIGINT DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS claimedDailyMilestones TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS lastDailyClaim BIGINT DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'online';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS customStatus TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS statusEmoji TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS xp BIGINT DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS level INT DEFAULT 1;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS streak INT DEFAULT 1;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS blockedUsers TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mutedUsers TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS following TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS followers TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS bookmarks TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS socialLinks TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS profileVisitors BIGINT DEFAULT 0;
 
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS serverId TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS channelId TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderAvatar TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderAvatarFrame TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderRank TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderCustomRankName TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS senderUsernameStyle TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS isSystemBot INT DEFAULT 0;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS replyTo TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS mediaUrl TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS mediaType TEXT;
-      ALTER TABLE messages ADD COLUMN IF NOT EXISTS gamblePayload TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS isEdited INT DEFAULT 0;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS isPinned INT DEFAULT 0;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS pollData TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS codeLanguage TEXT;
 
       ALTER TABLE servers ADD COLUMN IF NOT EXISTS iconUrl TEXT;
       ALTER TABLE servers ADD COLUMN IF NOT EXISTS bannerUrl TEXT;
@@ -624,9 +638,22 @@ export async function initDatabase() {
     dailyMessagesCount: 'INTEGER DEFAULT 0',
     claimedDailyMilestones: 'TEXT',
     lastDailyClaim: 'INTEGER DEFAULT 0',
+    status: 'TEXT DEFAULT "online"',
+    customStatus: 'TEXT',
+    statusEmoji: 'TEXT',
+    xp: 'INTEGER DEFAULT 0',
+    level: 'INTEGER DEFAULT 1',
+    streak: 'INTEGER DEFAULT 1',
+    blockedUsers: 'TEXT',
+    mutedUsers: 'TEXT',
+    following: 'TEXT',
+    followers: 'TEXT',
+    bookmarks: 'TEXT',
+    socialLinks: 'TEXT',
+    profileVisitors: 'INTEGER DEFAULT 0',
   });
 
-    ensureSqliteColumns('messages', {
+  ensureSqliteColumns('messages', {
     serverId: 'TEXT',
     channelId: 'TEXT',
     senderAvatar: 'TEXT',
@@ -640,6 +667,11 @@ export async function initDatabase() {
     mediaUrl: 'TEXT',
     mediaType: 'TEXT',
     gamblePayload: 'TEXT',
+    isEdited: 'INTEGER DEFAULT 0',
+    isPinned: 'INTEGER DEFAULT 0',
+    reactions: 'TEXT',
+    pollData: 'TEXT',
+    codeLanguage: 'TEXT',
   });
 
   ensureSqliteColumns('servers', {

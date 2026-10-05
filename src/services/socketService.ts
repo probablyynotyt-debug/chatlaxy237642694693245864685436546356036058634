@@ -11,6 +11,8 @@ type MessagesClearListener = (data: { serverId?: string | null; channelId?: stri
 type NewsListener = (event: { type: string; post?: NewsPost; id?: string }) => void;
 type NotificationListener = (notification: AppNotification) => void;
 type UserUpdateListener = (user: ProfileData) => void;
+type TypingListener = (data: { username: string; isTyping: boolean }) => void;
+type MessageUpdateListener = (message: ChatMessage) => void;
 
 class SocketService {
   private ws: WebSocket | null = null;
@@ -22,11 +24,13 @@ class SocketService {
 
   private presenceListeners = new Set<PresenceListener>();
   private messageListeners = new Set<MessageListener>();
+  private messageUpdateListeners = new Set<MessageUpdateListener>();
   private deleteListeners = new Set<MessageDeleteListener>();
   private clearListeners = new Set<MessagesClearListener>();
   private newsListeners = new Set<NewsListener>();
   private notifListeners = new Set<NotificationListener>();
   private userUpdateListeners = new Set<UserUpdateListener>();
+  private typingListeners = new Set<TypingListener>();
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -121,6 +125,19 @@ class SocketService {
       this.notifListeners.forEach((fn) => fn(data.notification));
     } else if (data.type === 'user_updated' && data.user) {
       this.userUpdateListeners.forEach((fn) => fn(data.user));
+    } else if (data.type === 'user_typing') {
+      this.typingListeners.forEach((fn) => fn(data));
+    } else if (data.type === 'message_updated' && data.message) {
+      this.messageUpdateListeners.forEach((fn) => fn(data.message));
+    }
+  }
+
+  sendTyping(isTyping: boolean) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'typing',
+        isTyping,
+      }));
     }
   }
 
@@ -132,6 +149,16 @@ class SocketService {
   onMessage(fn: MessageListener): () => void {
     this.messageListeners.add(fn);
     return () => this.messageListeners.delete(fn);
+  }
+
+  onMessageUpdated(fn: MessageUpdateListener): () => void {
+    this.messageUpdateListeners.add(fn);
+    return () => this.messageUpdateListeners.delete(fn);
+  }
+
+  onTyping(fn: TypingListener): () => void {
+    this.typingListeners.add(fn);
+    return () => this.typingListeners.delete(fn);
   }
 
   onMessageDeleted(fn: MessageDeleteListener): () => void {
